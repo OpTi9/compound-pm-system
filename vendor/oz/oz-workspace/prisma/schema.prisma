@@ -22,6 +22,7 @@ model User {
   notifications Notification[]
   tasks         Task[]
   settings      Setting[]
+  agentRuns     AgentRun[]
   prdsCreated   Prd[] @relation("PrdCreatedBy")
   knowledgeCreated KnowledgeItem[] @relation("KnowledgeCreatedByUser")
 }
@@ -45,6 +46,8 @@ model Room {
   tasks         Task[]
   prds          Prd[]
   knowledge     KnowledgeItem[]
+  agentRuns     AgentRun[]
+  workItems     WorkItem[]
   orchestrations AgentOrchestration[]
 }
 
@@ -71,6 +74,8 @@ model Agent {
   messages      Message[]
   artifacts     Artifact[]
   notifications Notification[]
+  agentRuns     AgentRun[]
+  workItems     WorkItem[]
   assignedTasks Task[]   @relation("TaskAssignee")
   createdTasks  Task[]   @relation("TaskCreator")
   ledOrchestrations AgentOrchestration[]
@@ -155,6 +160,7 @@ model Task {
   assignee Agent? @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   creator  Agent? @relation("TaskCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   user     User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workItems WorkItem[]
 
   @@index([roomId, userId])
 }
@@ -271,6 +277,7 @@ model Prd {
   room      Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   creator   User?  @relation("PrdCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
   epics     Epic[]
+  knowledgeItems KnowledgeItem[]
 
   @@index([roomId])
   @@index([status])
