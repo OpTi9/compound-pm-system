@@ -22,6 +22,7 @@ model User {
   notifications Notification[]
   tasks         Task[]
   settings      Setting[]
+  prdsCreated   Prd[] @relation("PrdCreatedBy")
 }
 
 model Room {
@@ -41,6 +42,7 @@ model Room {
   artifacts     Artifact[]
   notifications Notification[]
   tasks         Task[]
+  prds          Prd[]
   orchestrations AgentOrchestration[]
 }
 
@@ -245,6 +247,24 @@ model ProviderUsage {
   @@id([userId, providerKey])
   @@index([userId])
   @@index([providerKey])
+}
+
+model Prd {
+  id        String   @id @default(cuid())
+  title     String
+  content   String   @default("") // markdown
+  status    String   @default("DRAFT") // DRAFT|DECOMPOSING|ACTIVE|COMPLETED
+  roomId    String
+  createdBy String?  // User.id (nullable for future automation)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  room      Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  creator   User?  @relation("PrdCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+
+  @@index([roomId])
+  @@index([status])
+  @@index([createdBy])
 }
 
 // Orchestrator queue items (PM layer "driver"). Kept separate from UI-facing Tasks.

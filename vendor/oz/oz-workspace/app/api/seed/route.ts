@@ -44,6 +44,33 @@ export async function POST() {
       },
     })
 
+    const avery = await prisma.agent.create({
+      data: {
+        name: "Avery",
+        color: "#0F766E",
+        repoUrl: "",
+        harness: "claude-code",
+        systemPrompt: [
+          "You are Avery, the Architect. You decompose product requirements into airtight engineering plans.",
+          "",
+          "When asked to DECOMPOSE a PRD into tasks, you must output a single JSON object (prefer a ```json code fence```).",
+          "Schema:",
+          "{",
+          '  "tasks": [',
+          '    { "title": "...", "prompt": "...", "agentId": "optional-override" }',
+          "  ]",
+          "}",
+          "",
+          "Do not include any @mentions unless explicitly asked.",
+        ].join("\n"),
+        skills: JSON.stringify([]),
+        mcpServers: JSON.stringify([]),
+        scripts: JSON.stringify([]),
+        status: "idle",
+        userId,
+      },
+    })
+
     const backendLead = await prisma.agent.create({
       data: {
         name: "backend-lead",
@@ -110,7 +137,7 @@ export async function POST() {
         name: "Fraud",
         description: "Fraud detection system development",
         userId,
-        agents: { create: [{ agentId: backendLead.id }, { agentId: dataLead.id }, { agentId: rex.id }] },
+        agents: { create: [{ agentId: backendLead.id }, { agentId: dataLead.id }, { agentId: rex.id }, { agentId: avery.id }] },
       },
     })
 
@@ -119,7 +146,7 @@ export async function POST() {
         name: "Product",
         description: "Product development and feature planning",
         userId,
-        agents: { create: [{ agentId: productLead.id }, { agentId: designLead.id }, { agentId: rex.id }] },
+        agents: { create: [{ agentId: productLead.id }, { agentId: designLead.id }, { agentId: rex.id }, { agentId: avery.id }] },
       },
     })
 
@@ -128,7 +155,7 @@ export async function POST() {
         name: "Data",
         description: "Data infrastructure and pipelines",
         userId,
-        agents: { create: [{ agentId: dataLead.id }, { agentId: backendLead.id }, { agentId: rex.id }] },
+        agents: { create: [{ agentId: dataLead.id }, { agentId: backendLead.id }, { agentId: rex.id }, { agentId: avery.id }] },
       },
     })
 

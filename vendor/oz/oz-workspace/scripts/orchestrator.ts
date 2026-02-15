@@ -95,6 +95,89 @@ function parseReviewOutcome(text: string): { outcome: "APPROVED" | "CHANGES_NEED
   return null
 }
 
+function extractJsonBlock(text: string): string | null {
+  const t = (text || "").trim()
+  if (!t) return null
+
+  const fence = t.match(/```json\s*([\s\S]*?)\s*```/i)
+  if (fence && fence[1]) return fence[1].trim()
+
+  // Fallback: attempt to slice from first "{" to last "}".
+  const start = t.indexOf("{")
+  const end = t.lastIndexOf("}")
+  if (start !== -1 && end !== -1 && end > start) return t.slice(start, end + 1).trim()
+  return null
+}
+
+function parseDecomposeTasks(text: string): Array<{ title: string; prompt: string; agentId?: string }> | null {
+  const jsonText = extractJsonBlock(text)
+  if (!jsonText) return null
+  let parsed: any
+  try {
+    parsed = JSON.parse(jsonText)
+  } catch {
+    return null
+  }
+  const tasks = parsed?.tasks
+  if (!Array.isArray(tasks)) return null
+
+  const out: Array<{ title: string; prompt: string; agentId?: string }> = []
+  for (const t of tasks) {
+    const title = typeof t?.title === "string" ? t.title.trim() : ""
+    const prompt = typeof t?.prompt === "string" ? t.prompt.trim() : ""
+    const agentId = typeof t?.agentId === "string" ? t.agentId.trim() : ""
+    if (!title || !prompt) continue
+    out.push(agentId ? { title, prompt, agentId } : { title, prompt })
+  }
+  return out
+}
+
+async function isAgentInRoom(roomId: string, agentId: string): Promise<boolean> {
+  const m = await prisma.roomAgent.findUnique({
+    where: { roomId_agentId: { roomId, agentId } },
+    select: { id: true },
+  })
+  return Boolean(m)
+}
+
+async function computeDefaultImplAgentId(roomId: string): Promise<string | null> {
+  const roomAgents = await prisma.roomAgent.findMany({
+    where: { roomId },
+    include: { agent: { select: { id: true, name: true } } },
+  })
+  const pick = roomAgents
+    .map((ra) => ra.agent)
+    .find((a) => {
+      const n = (a?.name || "").trim().toLowerCase()
+      return n && n !== "rex" && n !== "avery"
+    })
+  return pick?.id || null
+}
+
+async function maybeMarkPrdCompleted(prdId: string) {
+  const prd = await prisma.prd.findUnique({ where: { id: prdId }, select: { id: true, status: true } }).catch(() => null)
+  if (!prd) return
+  if (prd.status !== "ACTIVE") return
+
+  const [tasksTotal, tasksNotSucceeded, inFlight] = await Promise.all([
+    prisma.workItem.count({ where: { chainId: prdId, type: "task" } }),
+    prisma.workItem.count({ where: { chainId: prdId, type: "task", status: { not: "SUCCEEDED" } } }),
+    prisma.workItem.count({
+      where: {
+        chainId: prdId,
+        type: { in: ["task", "review"] },
+        status: { in: ["QUEUED", "CLAIMED", "RUNNING"] },
+      },
+    }),
+  ])
+
+  if (tasksTotal === 0) return
+  if (tasksNotSucceeded !== 0) return
+  if (inFlight !== 0) return
+
+  await prisma.prd.updateMany({ where: { id: prdId, status: "ACTIVE" }, data: { status: "COMPLETED" } })
+}
+
 async function scheduleReviewForTask(item: WorkItemRow, payload: any, promptText: string) {
   if (!item) return
   if (item.type !== "task" || item.status !== "SUCCEEDED") return
@@ -245,6 +328,68 @@ async function scheduleReworkFromReview(reviewItem: WorkItemRow, reviewPayload: 
       sourceTaskId: parent.sourceTaskId,
     },
   })
+}
+
+async function handleDecomposeSucceeded(item: WorkItemRow, payload: any, decomposeText: string) {
+  if (!item.roomId) throw new Error("Missing roomId")
+
+  const prdId = typeof payload?.prdId === "string" ? payload.prdId.trim() : (item.chainId || "").trim()
+  if (!prdId) throw new Error("Missing prdId")
+
+  const tasks = parseDecomposeTasks(decomposeText)
+  if (!tasks || tasks.length === 0) throw new Error("No tasks parsed from decomposer output")
+
+  let defaultAgentId: string | null =
+    typeof payload?.defaultAgentId === "string" ? payload.defaultAgentId.trim() : null
+  if (defaultAgentId && !(await isAgentInRoom(item.roomId, defaultAgentId))) {
+    defaultAgentId = null
+  }
+  if (!defaultAgentId) defaultAgentId = await computeDefaultImplAgentId(item.roomId)
+  if (!defaultAgentId) throw new Error("No default implementation agent available in room")
+
+  const userId = payload?.userId ?? null
+
+  // Enqueue tasks (dedupe best-effort by title+prompt hash in chain).
+  for (const t of tasks) {
+    let agentId = t.agentId || ""
+    if (agentId && !(await isAgentInRoom(item.roomId, agentId))) agentId = ""
+    agentId = agentId || defaultAgentId
+
+    const prompt = [
+      t.prompt.trim(),
+      "",
+      "(This task was generated from PRD decomposition.)",
+    ].join("\n")
+
+    const stableKey = crypto.createHash("sha1").update(`${prdId}\n${t.title}\n${t.prompt}`).digest("hex")
+    const markerId = `decompose:${prdId}:${stableKey}`
+    const marker = await prisma.agentCallback.findUnique({ where: { id: markerId }, select: { id: true } }).catch(() => null)
+    if (marker) continue
+    await prisma.agentCallback.create({ data: { id: markerId, response: "1" } }).catch(() => null)
+
+    await prisma.workItem.create({
+      data: {
+        type: "task",
+        status: "QUEUED",
+        payload: JSON.stringify({
+          roomId: item.roomId,
+          agentId,
+          prompt,
+          userId,
+          title: t.title,
+          prdId,
+        }),
+        chainId: prdId,
+        sourceItemId: item.id,
+        iteration: 0,
+        maxIterations: 3,
+        roomId: item.roomId,
+        agentId,
+      },
+    })
+  }
+
+  await prisma.prd.updateMany({ where: { id: prdId }, data: { status: "ACTIVE" } })
 }
 
 async function claimNext(opts: {
@@ -422,6 +567,7 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
     // Completion hooks:
     // - task success => enqueue review
     // - review success => parse outcome; if changes needed enqueue rework task
+    // - decompose success => parse JSON tasks and enqueue work
     if (item.type === "task") {
       await scheduleReviewForTask({ ...item, status: "SUCCEEDED", chainId }, payload, prompt).catch(async (e) => {
         const msg = e instanceof Error ? e.message : String(e)
@@ -430,6 +576,11 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
           data: { lastError: truncate(`review_enqueue_failed: ${msg}`, 4000) },
         })
       })
+
+      if (chainId) {
+        // Best-effort: may complete PRD if this was the last pending item and all reviews are done.
+        await maybeMarkPrdCompleted(chainId).catch(() => {})
+      }
     } else if (item.type === "review") {
       const reviewText = (res.message as any)?.content || (res.message as any)?.message?.content || ""
       const parsed = parseReviewOutcome(reviewText)
@@ -450,6 +601,25 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
           data: { status: "FAILED", lastError: "Invalid review format (expected APPROVED or CHANGES_NEEDED)" },
         })
       }
+
+      if (chainId) {
+        await maybeMarkPrdCompleted(chainId).catch(() => {})
+      }
+    } else if (item.type === "decompose") {
+      const decomposeText = (res.message as any)?.content || ""
+      try {
+        await handleDecomposeSucceeded({ ...item, status: "SUCCEEDED", chainId }, payload, decomposeText)
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        await prisma.workItem.updateMany({
+          where: { id: item.id, status: "SUCCEEDED" },
+          data: { status: "FAILED", lastError: truncate(`decompose_parse_failed: ${msg}`, 4000) },
+        })
+        const prdId = typeof payload?.prdId === "string" ? payload.prdId.trim() : chainId
+        if (prdId) {
+          await prisma.prd.updateMany({ where: { id: prdId, status: "DECOMPOSING" }, data: { status: "DRAFT" } }).catch(() => {})
+        }
+      }
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
@@ -461,6 +631,13 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
         lastError: truncate(msg, 4000),
       },
     })
+
+    if (item.type === "decompose") {
+      const prdId = typeof payload?.prdId === "string" ? payload.prdId.trim() : (item.chainId || "").trim()
+      if (prdId) {
+        await prisma.prd.updateMany({ where: { id: prdId, status: "DECOMPOSING" }, data: { status: "DRAFT" } }).catch(() => {})
+      }
+    }
   }
 }
 
