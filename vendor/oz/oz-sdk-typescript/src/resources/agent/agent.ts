@@ -173,14 +173,14 @@ export interface AmbientAgentConfig {
   /**
    * Skill specification identifying which agent skill to use. Format:
    * "{owner}/{repo}:{skill_path}" Example:
-   * "warpdotdev/warp-server:.claude/skills/deploy/SKILL.md" Use the list agents
-   * endpoint to discover available skills.
+   * "org/repo:.claude/skills/deploy/SKILL.md" Use the list agents endpoint to
+   * discover available skills.
    */
   skill_spec?: string;
 
   /**
    * Self-hosted worker ID that should execute this task. If not specified or set to
-   * "warp", the task runs on Warp-hosted workers.
+   * "warp", the task runs on hosted workers.
    */
   worker_host?: string;
 }
@@ -260,7 +260,7 @@ export interface McpServerConfig {
   url?: string;
 
   /**
-   * Reference to a Warp shared MCP server by UUID
+   * Reference to a shared MCP server by UUID (if supported by your control plane)
    */
   warp_id?: string;
 }

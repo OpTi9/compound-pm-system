@@ -111,7 +111,7 @@ jobs:
         uses: warpdotdev/oz-agent-action@v1
         with:
           oz_api_key: ${{ secrets.OZ_API_KEY }}
-          profile: ${{ vars.WARP_AGENT_PROFILE }}
+          profile: ${{ vars.OZ_AGENT_PROFILE }}
           prompt: ${{ steps.prompt.outputs.prompt }}
 
       - name: Validate responses.json

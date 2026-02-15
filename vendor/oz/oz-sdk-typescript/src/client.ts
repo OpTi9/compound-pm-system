@@ -152,12 +152,12 @@ export class OzAPI {
    */
   constructor({
     baseURL = readEnv('OZ_API_BASE_URL'),
-    apiKey = readEnv('OZ_API_KEY') ?? readEnv('WARP_API_KEY'),
+    apiKey = readEnv('OZ_API_KEY'),
     ...opts
   }: ClientOptions = {}) {
     if (apiKey === undefined) {
       throw new Errors.OzAPIError(
-        "Missing API key: set OZ_API_KEY (preferred) or WARP_API_KEY (deprecated), or pass { apiKey: '...' } to the client constructor.",
+        "Missing API key: set OZ_API_KEY, or pass { apiKey: '...' } to the client constructor.",
       );
     }
 

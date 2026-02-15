@@ -160,7 +160,7 @@ jobs:
         with:
           prompt: ${{ steps.prompt.outputs.prompt }}
           oz_api_key: ${{ secrets.OZ_API_KEY }}
-          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
           output_format: json
 
       - name: Commit and Push Changes
@@ -169,7 +169,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "Oz Agent"
-          git config user.email "agent@warp.dev"
+          git config user.email "agent@example.com"
 
           if [[ -n $(git status --porcelain) ]]; then
             git add .

@@ -65,7 +65,7 @@ Full Changelog: [v0.3.0...v0.4.0](https://github.com/warpdotdev/warp-sdk-python/
 
 ### Documentation
 
-* **dev:** Add WARP.md file ([7f1b835](https://github.com/warpdotdev/warp-sdk-python/commit/7f1b835240574dc517d424dca84251f86c4b1276))
+* **dev:** Add OZ.md file (vendored)
 
 ## 0.3.0 (2026-01-05)
 

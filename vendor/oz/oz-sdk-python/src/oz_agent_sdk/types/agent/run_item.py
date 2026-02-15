@@ -149,11 +149,11 @@ class RunItem(BaseModel):
     """Source that created the run:
 
     - LINEAR: Created from Linear integration
-    - API: Created via the Warp API
+    - API: Created via the API
     - SLACK: Created from Slack integration
     - LOCAL: Created from local CLI/app
     - SCHEDULED_AGENT: Created by a scheduled agent
-    - WEB_APP: Created from the Warp web app
+    - WEB_APP: Created from the web app
     - GITHUB_ACTION: Created from a GitHub action
     - CLOUD_MODE: Created from a Cloud Mode
     - CLI: Created from the CLI

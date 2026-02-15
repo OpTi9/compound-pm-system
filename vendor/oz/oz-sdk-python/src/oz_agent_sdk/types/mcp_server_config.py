@@ -29,4 +29,4 @@ class McpServerConfig(BaseModel):
     """SSE/HTTP transport - server URL"""
 
     warp_id: Optional[str] = None
-    """Reference to a Warp shared MCP server by UUID"""
+    """Reference to a shared MCP server by UUID (if supported by your control plane)"""

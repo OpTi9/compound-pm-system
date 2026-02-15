@@ -26,8 +26,8 @@ function slugify(text: string) {
 
 function getArtifactUrl(a: ArtifactItem) {
   if (a.artifact_type === "PULL_REQUEST") return a.data.url
-  // Warp-specific notebook URLs are intentionally not generated here. If your control plane
-  // exposes a document viewer, map that document UID to an in-app URL instead.
+  // Notebook/document URLs are intentionally not generated here. If your control plane exposes
+  // a document viewer, map that document UID to an in-app URL instead.
   return null
 }
 

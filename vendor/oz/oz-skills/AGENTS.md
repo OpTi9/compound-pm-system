@@ -1,16 +1,16 @@
 # AGENTS.md
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 
 ## Repository Overview
 
-This is the `oz-skills` repository - a public catalog of reusable Agent Skills for Warp AI agents and Oz. These are pre-built skills that external users can copy into their projects to teach agents about common workflows and best practices.
+This is the `oz-skills` repository: a public catalog of reusable Agent Skills for Oz and other coding agents. These are pre-built skills that external users can copy into their projects to teach agents about common workflows and best practices.
 
 ## Agent Skills Standard
 
 This repository follows the [Agent Skills](https://agentskills.io) open standard. Agent Skills are folders containing a `SKILL.md` file with YAML frontmatter and markdown instructions that agents can discover and use.
 
-For comprehensive details about the skills format and usage patterns, see `wip/warp-skills-overview.md`.
+For comprehensive details about the skills format and usage patterns, see the Agent Skills specification.
 
 ## Repository Structure
 
@@ -106,7 +106,7 @@ When working in this repository:
 To test a skill from this repository:
 
 1. Copy the skill folder to a test project's `.agents/skills/` directory
-2. Interact with a Warp agent on a relevant task
+2. Interact with a coding agent on a relevant task
 3. Verify the agent follows the skill's guidance
 4. Refine the skill based on results
 

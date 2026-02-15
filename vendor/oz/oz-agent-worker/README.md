@@ -2,8 +2,6 @@
 
 Self-hosted worker for Oz cloud agents.
 
-📖 **[Documentation](https://docs.warp.dev/agent-platform/cloud-agents/self-hosting)**
-
 ## Overview
 
 `oz-agent-worker` is a daemon that connects to Oz via WebSocket to receive and execute cloud agent tasks on self-hosted infrastructure.
@@ -69,4 +67,4 @@ oz-agent-worker --api-key "wk-abc123" --worker-id "my-worker"
 
 ## License
 
-Copyright © 2026 Warp
+Copyright © 2026

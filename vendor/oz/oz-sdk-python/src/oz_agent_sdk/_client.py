@@ -69,10 +69,10 @@ class OzAPI(SyncAPIClient):
         This automatically infers the `api_key` argument from the `OZ_API_KEY` environment variable if it is not provided.
         """
         if api_key is None:
-            api_key = os.environ.get("OZ_API_KEY") or os.environ.get("WARP_API_KEY")
+            api_key = os.environ.get("OZ_API_KEY")
         if api_key is None:
             raise OzAPIError(
-                "Missing api_key: set OZ_API_KEY (preferred) or WARP_API_KEY (deprecated), or pass api_key=... to the client."
+                "Missing api_key: set OZ_API_KEY, or pass api_key=... to the client."
             )
         self.api_key = api_key
 
@@ -243,10 +243,10 @@ class AsyncOzAPI(AsyncAPIClient):
         This automatically infers the `api_key` argument from the `OZ_API_KEY` environment variable if it is not provided.
         """
         if api_key is None:
-            api_key = os.environ.get("OZ_API_KEY") or os.environ.get("WARP_API_KEY")
+            api_key = os.environ.get("OZ_API_KEY")
         if api_key is None:
             raise OzAPIError(
-                "Missing api_key: set OZ_API_KEY (preferred) or WARP_API_KEY (deprecated), or pass api_key=... to the client."
+                "Missing api_key: set OZ_API_KEY, or pass api_key=... to the client."
             )
         self.api_key = api_key
 

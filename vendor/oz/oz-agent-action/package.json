@@ -7,7 +7,7 @@
     "actions"
   ],
   "type": "module",
-  "author": "Warp Team <dev@warp.dev>",
+  "author": "Oz Team",
   "license": "MIT",
   "description": "Run the Oz agent in a GitHub workflow",
   "homepage": "https://github.com/warpdotdev/oz-agent-action#readme",

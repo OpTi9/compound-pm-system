@@ -26,9 +26,9 @@ Skills follow the [Agent Skills](https://agentskills.io) standard format.
 Before submitting:
 
 1. Copy your skill folder to `~/.agents/skills/` or a test project's `.agents/skills/`
-2. Interact with a Warp agent on a relevant task
+2. Interact with a coding agent on a relevant task
 3. Verify the agent follows your skill's guidance
 
 ## Getting Help
 
-Questions? Join the [Warp Preview Slack](https://warp.dev/preview-slack) and ask in the #general channel.
+Questions? Open an issue or discussion in the repository where these skills are maintained.

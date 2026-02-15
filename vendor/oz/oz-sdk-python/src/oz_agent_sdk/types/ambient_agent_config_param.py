@@ -45,5 +45,5 @@ class AmbientAgentConfigParam(TypedDict, total=False):
     worker_host: str
     """
     Self-hosted worker ID that should execute this task. If not specified or set to
-    "warp", the task runs on Warp-hosted workers.
+    "warp", the task runs on hosted workers.
     """

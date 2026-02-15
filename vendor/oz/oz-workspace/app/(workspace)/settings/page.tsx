@@ -20,11 +20,8 @@ export default function SettingsPage() {
   React.useEffect(() => {
     if (settings.oz_api_key !== undefined) {
       setApiKey(settings.oz_api_key)
-    } else if (settings.warp_api_key !== undefined) {
-      // Backward-compat: older versions stored the API key under `warp_api_key`.
-      setApiKey(settings.warp_api_key)
     }
-  }, [settings.oz_api_key, settings.warp_api_key])
+  }, [settings.oz_api_key])
 
   const handleSave = async () => {
     setSaving(true)

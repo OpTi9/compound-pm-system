@@ -16,26 +16,19 @@ function getRunnerMode(): RunnerMode {
 async function getApiKey(userId?: string | null): Promise<string> {
   let apiKey: string | undefined
   if (userId) {
-    const [oz, warp] = await Promise.all([
-      prisma.setting.findUnique({ where: { userId_key: { userId, key: "oz_api_key" } } }),
-      prisma.setting.findUnique({ where: { userId_key: { userId, key: "warp_api_key" } } }),
-    ])
-    apiKey = oz?.value ?? warp?.value
+    const oz = await prisma.setting.findUnique({ where: { userId_key: { userId, key: "oz_api_key" } } })
+    apiKey = oz?.value
   }
-  apiKey = apiKey || process.env.OZ_API_KEY || process.env.WARP_API_KEY
+  apiKey = apiKey || process.env.OZ_API_KEY
   if (!apiKey) {
-    throw new Error("API key is not configured. Set OZ_API_KEY (preferred) or WARP_API_KEY (deprecated), or store it in Settings.")
+    throw new Error("API key is not configured. Set OZ_API_KEY, or store it in Settings.")
   }
   return apiKey
 }
 
 function getOzClient(apiKey: string): OzAPI {
-  // Prefer OZ_API_BASE_URL (must include /api/v1). Support legacy WARP_API_URL as a root.
-  const baseURL = process.env.OZ_API_BASE_URL
-    ? process.env.OZ_API_BASE_URL.replace(/\/+$/, "")
-    : process.env.WARP_API_URL
-      ? `${process.env.WARP_API_URL.replace(/\/+$/, "")}/api/v1`
-      : undefined
+  // OZ_API_BASE_URL must include /api/v1 when set.
+  const baseURL = process.env.OZ_API_BASE_URL ? process.env.OZ_API_BASE_URL.replace(/\/+$/, "") : undefined
 
   return new OzAPI({
     apiKey,
@@ -49,8 +42,8 @@ interface RunAgentOptions {
   environmentId?: string
   userId?: string | null
   /**
-   * Stable id for this invocation. In the Warp/Oz workflow, this is the value that is used as
-   * `task_id` when the agent posts back to `/api/agent-response`.
+   * Stable id for this invocation. This is the value that is used as `task_id` when the agent
+   * posts back to `/api/agent-response`.
    */
   taskId?: string
   roomId?: string

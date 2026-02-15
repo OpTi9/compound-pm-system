@@ -1,7 +1,7 @@
 # Oz Agent Action
 
 This action supports running the Oz Agent in GitHub Actions. It wraps the
-[Oz CLI](https://docs.warp.dev/developers/cli) with:
+Oz CLI with:
 
 - Caching for package installation
 - Capturing output for subsequent steps
@@ -9,7 +9,7 @@ This action supports running the Oz Agent in GitHub Actions. It wraps the
 ## Quickstart
 
 To get started, you'll need a
-[Oz API Key](https://docs.warp.dev/developers/cli#api-key-authentication). We recommend storing this
+Oz API Key. We recommend storing this
 key as a [secret](https://docs.github.com/en/actions/concepts/security/secrets) in your repository
 or organization.
 
@@ -25,7 +25,7 @@ Then, add a step to your workflow that runs Oz:
       2. Thoroughly analyze all changes, and identify any issues with style, security, or correctness
       3. If you have suggestions, use the `gh` command to comment on the PR.
     # Optional:
-    # model: <warp-model-id>
+    # model: <model-id>
     # name: "PR review"
     # mcp: |
     #   {"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}}}}
@@ -35,7 +35,7 @@ Then, add a step to your workflow that runs Oz:
 ## Using Skills
 
 Skills provide reusable, specialized capabilities for the Oz Agent. You can find a curated set of
-skills in the [oz-skills](https://github.com/warpdotdev/oz-skills) repository, or create your own.
+skills in the `oz-skills` module, or create your own.
 
 You can use skills instead of or along with prompts:
 
@@ -70,9 +70,7 @@ with:
 - Oz's output is available as `steps.${step_id}.outputs.agent_output`. Use the `output_format: json`
   option to get machine-readable agent output!
 - For debugging, use the `share` option to automatically share the agent's session with your
-  teammates. See the
-  [Session Sharing](https://docs.warp.dev/knowledge-and-collaboration/session-sharing) documentation
-  for more info.
+  teammates.
 
 See the [action definition](./action.yml) for all options.
 

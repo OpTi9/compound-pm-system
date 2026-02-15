@@ -135,7 +135,7 @@ jobs:
         with:
           prompt: ${{ steps.prompt.outputs.prompt }}
           oz_api_key: ${{ secrets.OZ_API_KEY }}
-          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
 
       - name: Create Fix PR
         env:
@@ -167,7 +167,7 @@ jobs:
 
           FIX_BRANCH="oz-agent-fix/run-$RUN_ID"
           git config user.name "Oz Agent"
-          git config user.email "agent@warp.dev"
+          git config user.email "agent@example.com"
 
           git checkout -b "$FIX_BRANCH"
           git add .

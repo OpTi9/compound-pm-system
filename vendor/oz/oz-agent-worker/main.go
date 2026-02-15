@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 
 	"github.com/alecthomas/kong"
@@ -32,16 +31,8 @@ func main() {
 		kong.Vars{},
 	)
 
-	// Backward-compat: accept the old env var name.
 	if CLI.APIKey == "" {
-		CLI.APIKey = os.Getenv("WARP_API_KEY")
-	}
-	if CLI.APIKey == "" {
-		log.Fatalf(ctx, "Missing API key: set OZ_API_KEY (preferred) or WARP_API_KEY (deprecated)")
-	}
-
-	if strings.HasPrefix(CLI.WorkerID, "warp") {
-		log.Fatalf(ctx, "Invalid worker-id: values starting with 'warp' are reserved and cannot be used")
+		log.Fatalf(ctx, "Missing API key: set OZ_API_KEY")
 	}
 
 	log.SetLevel(CLI.LogLevel)

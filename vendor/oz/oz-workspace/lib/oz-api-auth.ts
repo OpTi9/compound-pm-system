@@ -28,7 +28,7 @@ export async function requireOzApiAuth(
   const setting = await prisma.setting.findFirst({
     where: {
       value: token,
-      key: { in: ["oz_api_key", "warp_api_key"] },
+      key: { in: ["oz_api_key"] },
       userId: { not: null },
     },
     select: { userId: true },

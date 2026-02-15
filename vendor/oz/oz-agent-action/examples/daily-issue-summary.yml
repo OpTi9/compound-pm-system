@@ -117,7 +117,7 @@ jobs:
         with:
           prompt: ${{ steps.prompt.outputs.prompt }}
           oz_api_key: ${{ secrets.OZ_API_KEY }}
-          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
 
       - name: Post to Slack
         if: steps.fetch_issues.outputs.has_issues == 'true'

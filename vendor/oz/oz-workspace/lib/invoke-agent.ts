@@ -216,7 +216,7 @@ To mention an agent, include @agent-name in your response message.
     console.log("[invokeAgent] Calling runAgent with invocationId:", invocationId)
     console.log("[invokeAgent] Prompt length:", fullPrompt.length)
 
-    const environmentId = agent.environmentId || process.env.OZ_ENVIRONMENT_ID || process.env.WARP_ENVIRONMENT_ID
+    const environmentId = agent.environmentId || process.env.OZ_ENVIRONMENT_ID
     if (isRemoteRunner && !environmentId) {
       throw new Error("No environment ID configured. Configure it on the agent or set OZ_ENVIRONMENT_ID.")
     }

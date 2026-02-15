@@ -21,7 +21,7 @@ const defaultReusableWorkflowInputs = {
     default: ''
   },
   model: {
-    description: 'Optional Warp model ID to use for Oz Agent.',
+    description: 'Optional model ID to use for Oz Agent.',
     required: false,
     default: ''
   },
@@ -196,21 +196,21 @@ function updateOzAgentActionInputs(job, workflowCallInputs) {
     step.with ||= {}
 
     if ('profile' in workflowCallInputs) {
-      // In the examples, profile is wired to vars.WARP_AGENT_PROFILE.
+      // In the examples, profile is wired to vars.OZ_AGENT_PROFILE.
       // In the reusable workflow, allow overriding via an input.
-      step.with.profile = "${{ inputs.profile || vars.WARP_AGENT_PROFILE || '' }}"
+      step.with.profile = "${{ inputs.profile || vars.OZ_AGENT_PROFILE || '' }}"
     }
 
     if ('model' in workflowCallInputs) {
-      step.with.model = "${{ inputs.model || vars.WARP_AGENT_MODEL || '' }}"
+      step.with.model = "${{ inputs.model || vars.OZ_AGENT_MODEL || '' }}"
     }
 
     if ('name' in workflowCallInputs) {
-      step.with.name = "${{ inputs.name || vars.WARP_AGENT_NAME || '' }}"
+      step.with.name = "${{ inputs.name || vars.OZ_AGENT_NAME || '' }}"
     }
 
     if ('mcp' in workflowCallInputs) {
-      step.with.mcp = "${{ inputs.mcp || vars.WARP_AGENT_MCP || '' }}"
+      step.with.mcp = "${{ inputs.mcp || vars.OZ_AGENT_MCP || '' }}"
     }
   }
 }

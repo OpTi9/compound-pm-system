@@ -29,7 +29,7 @@ import os
 from oz_agent_sdk import OzAPI
 
 client = OzAPI(
-    api_key=os.environ.get("OZ_API_KEY"),  # This is the default and can be omitted (WARP_API_KEY is a deprecated alias)
+    api_key=os.environ.get("OZ_API_KEY"),  # This is the default and can be omitted
 )
 
 response = client.agent.run(
@@ -63,7 +63,7 @@ print(response.task_id)
 
 The `config` parameter accepts the following fields:
 
-- `environment_id`: UID of a cloud environment to run the agent in. Environments define the Docker image, GitHub repositories, and setup commands for agent execution. See [Creating an Environment](https://docs.warp.dev/integrations/integrations-overview/integrations-and-environments#creating-an-environment) for setup instructions.
+- `environment_id`: UID of a cloud environment to run the agent in. Environments define the Docker image, GitHub repositories, and setup commands for agent execution.
 - `model_id`: LLM model to use (uses workspace default if not specified)
 - `name`: Config name for searchability and traceability
 - `base_prompt`: Custom base prompt for the agent
@@ -80,7 +80,7 @@ response = client.agent.run(
         "environment_id": "your-environment-id",
         "mcp_servers": {
             "github": {
-                "warp_id": "your-shared-mcp-server-id",  # Reference a Warp shared MCP server
+                "warp_id": "your-shared-mcp-server-id",  # Reference a shared MCP server (if supported by your control plane)
             },
             "custom-server": {
                 "command": "npx",
@@ -111,7 +111,7 @@ import asyncio
 from oz_agent_sdk import AsyncOzAPI
 
 client = AsyncOzAPI(
-    api_key=os.environ.get("OZ_API_KEY"),  # This is the default and can be omitted (WARP_API_KEY is a deprecated alias)
+    api_key=os.environ.get("OZ_API_KEY"),  # This is the default and can be omitted
 )
 
 
@@ -149,7 +149,7 @@ from oz_agent_sdk import AsyncOzAPI
 
 async def main() -> None:
     async with AsyncOzAPI(
-        api_key=os.environ.get("OZ_API_KEY"),  # This is the default and can be omitted (WARP_API_KEY is a deprecated alias)
+        api_key=os.environ.get("OZ_API_KEY"),  # This is the default and can be omitted
         http_client=DefaultAioHttpClient(),
     ) as client:
         response = await client.agent.run(

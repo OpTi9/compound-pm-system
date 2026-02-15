@@ -1,21 +1,20 @@
 # Oz Dev Environment Docker Images
 
 This repository contains prebuilt Docker images for use with
-[Oz environments](https://docs.warp.dev/agent-platform/cloud-agents/environments). These images
+Oz environments. These images
 provide ready-to-use development environments for running
-[Oz cloud agents](https://docs.warp.dev/agent-platform/cloud-agents/cloud-agents-overview) and
-[integrations](https://docs.warp.dev/agent-platform/cloud-agents/integrations) (Slack, Linear,
+Oz cloud agents and
+integrations (Slack, Linear,
 GitHub Actions).
 
-An [Oz environment](https://docs.warp.dev/agent-platform/cloud-agents/environments) defines the
+An Oz environment defines the
 execution context for an Oz cloud agent run: the **Docker image**, **repositories to clone**,
 **setup commands**, and **runtime configuration**. These images handle the Docker image part so
 you can get started quickly.
 
 ## Quickstart
 
-To get started, you'll need to have the [Oz CLI](https://docs.warp.dev/reference/cli) installed
-and authenticated. This is done automatically if you already have the Warp app installed.
+To get started, you'll need to have the Oz CLI installed and authenticated.
 
 ### 1. Create an environment
 
@@ -30,15 +29,14 @@ oz environment create \
 ```
 
 Alternatively, use your Oz control plane UI to create environments with a guided
-flow, or the `/create-environment` slash command in Warp to auto-detect your project's languages
-and suggest an appropriate image.
+flow to auto-detect your project's languages and suggest an appropriate image.
 
 ### 2. Run Oz agents
 
 Once your environment is ready, you can:
 
 - **Run Oz agents** from the CLI, your control plane UI, or the
-  [Oz Agent API & SDK](https://docs.warp.dev/reference/api-and-sdk):
+  Oz Agent API & SDK:
 
 ```bash
 oz agent run-cloud --environment env_abc123 --prompt "Fix the failing tests in src/"
@@ -61,7 +59,7 @@ oz schedule create \
 ```
 
 - **Run skill-based agents** using reusable
-  [skills](https://docs.warp.dev/agent-platform/capabilities/skills) from your repos:
+  skills from your repos:
 
 ```bash
 oz agent run-cloud \
@@ -108,7 +106,7 @@ The `-agents` tagged images include the following preinstalled coding agent CLIs
 
 Each CLI authenticates via environment variables (e.g. `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`). Store these as
-[Oz secrets](https://docs.warp.dev/agent-platform/cloud-agents/cloud-agent-secrets) so they are
+Oz secrets so they are
 available at runtime.
 
 If you don't need third-party coding agent CLIs, use the base tags (without `-agents`) for
@@ -135,28 +133,17 @@ RUN apt-get update && apt-get install -y your-package
 
 ## Helpful tips
 
-- **Guided setup** — Use the `/create-environment` slash command in Warp for a guided setup flow
-  that detects your project's languages and suggests the appropriate image and setup commands. See
-  the [documentation](https://docs.warp.dev/agent-platform/cloud-agents/environments#create-an-environment-with-guided-setup-recommended)
-  for more info.
+- **Guided setup** — Use your control plane UI for guided setup that detects your project's
+  languages and suggests the appropriate image and setup commands.
 - **One environment, many triggers** — Create one environment per codebase, then reuse it across
   Slack, Linear, CLI runs, schedules, and API calls.
 - **Secrets** — For credentials and sensitive data, use
-  [Oz agent secrets](https://docs.warp.dev/agent-platform/cloud-agents/cloud-agent-secrets)
-  rather than baking tokens into your image.
+  Oz agent secrets rather than baking tokens into your image.
 
 ## Documentation
 
-- [Oz Platform Overview](https://docs.warp.dev/agent-platform/cloud-agents/platform) — CLI,
-  API/SDK, orchestration, environments, and hosts
-- [Oz Environments](https://docs.warp.dev/agent-platform/cloud-agents/environments) — How
-  environments work and when to use them
-- [Oz Cloud Agents](https://docs.warp.dev/agent-platform/cloud-agents/cloud-agents-overview) —
-  Background agents that run from events, schedules, or integrations
-- [Skills as Agents](https://docs.warp.dev/agent-platform/cloud-agents/skills-as-agents) —
-  Run agents from reusable skill definitions
-- Oz Control Plane UI — Visual interface for managing agents, runs, schedules,
-  and integrations
-- [Oz CLI](https://docs.warp.dev/reference/cli) — Command-line interface for running agents
-- [Oz Agent API & SDK](https://docs.warp.dev/reference/api-and-sdk) — Programmatic access to
-  cloud agents
+Refer to your control plane's documentation for:
+- Oz environments
+- Oz cloud agents
+- Skills and integrations
+- Oz CLI and API/SDK

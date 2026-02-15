@@ -20,9 +20,9 @@ async function runAgent(): Promise<void> {
     throw new Error('Either `prompt`, `saved_prompt`, or `skill` must be provided')
   }
 
-  const apiKey = core.getInput('oz_api_key') || core.getInput('warp_api_key')
+  const apiKey = core.getInput('oz_api_key')
   if (!apiKey) {
-    throw new Error('`oz_api_key` must be provided (or `warp_api_key` as a deprecated alias).')
+    throw new Error('`oz_api_key` must be provided.')
   }
 
   const cliPath = core.getInput('oz_cli_path')
@@ -30,7 +30,7 @@ async function runAgent(): Promise<void> {
   if (cliPath) {
     command = cliPath
   } else {
-    // We intentionally do not download from Warp infrastructure by default.
+    // We intentionally do not download from upstream infrastructure by default.
     // If you want automated installation, provide an explicit URL to a .deb you host.
     await installOz(core.getInput('oz_cli_download_url'))
     command = channel === 'preview' ? 'oz-preview' : 'oz'
@@ -96,7 +96,6 @@ async function runAgent(): Promise<void> {
       env: {
         ...process.env,
         OZ_API_KEY: apiKey,
-        WARP_API_KEY: apiKey, // Backward-compat for older CLIs
       }
     })
   } catch (error) {

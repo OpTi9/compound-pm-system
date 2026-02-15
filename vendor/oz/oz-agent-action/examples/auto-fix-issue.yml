@@ -94,7 +94,7 @@ jobs:
         with:
           prompt: ${{ steps.prompt.outputs.prompt }}
           oz_api_key: ${{ secrets.OZ_API_KEY }}
-          profile: ${{ vars.WARP_AGENT_PROFILE || '' }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
 
       - name: Create PR and Comment
         env:
@@ -115,7 +115,7 @@ jobs:
           BRANCH_NAME="fix/issue-$ISSUE_NUMBER"
 
           git config user.name "Oz Agent"
-          git config user.email "agent@warp.dev"
+          git config user.email "agent@example.com"
 
           git checkout -b "$BRANCH_NAME"
           git add .

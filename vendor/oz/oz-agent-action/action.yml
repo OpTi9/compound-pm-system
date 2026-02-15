@@ -43,11 +43,7 @@ inputs:
     required: true
     default: text
   oz_api_key:
-    description: 'Oz API key for the Oz agent (preferred)'
-    required: false
-    default: ''
-  warp_api_key:
-    description: 'Deprecated alias for oz_api_key'
+    description: 'Oz API key for the Oz agent'
     required: false
     default: ''
   oz_cli_path:

@@ -1,6 +1,6 @@
 # Oz CLI - Create Environment
 
-Guide agent to create Warp Environments using `oz environment create`.
+Guide agent to create Environments using `oz environment create`.
 
 ## Overview
 
@@ -29,7 +29,7 @@ Determine which repositories to work with. Formats:
 - Current working directory → run `git remote get-url origin`
 
 **If repo not available locally:**
-- Clone to temporary dir (e.g. `/tmp/warp-env-<random>`)
+- Clone to temporary dir (e.g. `/tmp/oz-env-<random>`)
 - Perform minimal/partial clone for dependency/Docker files only
 - No full history, tags, or large blobs
 - Only need working tree to read build/dependency files
@@ -37,7 +37,7 @@ Determine which repositories to work with. Formats:
 **HARD REQUIREMENT:**
 - Treat temp directory as internal-only
 - **NEVER** `cd` into it or change user's working directory
-- Always reference via absolute paths: `cat /tmp/warp-env-123/requirements.txt`
+- Always reference via absolute paths: `cat /tmp/oz-env-123/requirements.txt`
 
 ### 2. Docker Image Selection
 
@@ -49,17 +49,17 @@ Analyze repo contents to detect language/tooling:
 
 Determine languages/frameworks across all repos.
 
-**Warp pre-built images** (all on ubuntu with Node.js + Python):
-- `warpdotdev/dev-base:latest` - Node.js + Python only
-- `warpdotdev/dev-dotnet:8.0` - .NET + Node.js + Python
-- `warpdotdev/dev-go:1.23` - Go + Node.js + Python
-- `warpdotdev/dev-java:21` - Java + Node.js + Python
-- `warpdotdev/dev-ruby:3.3` - Ruby + Node.js + Python
-- `warpdotdev/dev-rust:1.85` - Rust + Node.js + Python
+**Prebuilt images** (examples):
+- `dev-base:latest` - Node.js + Python only
+- `dev-dotnet:8.0` - .NET + Node.js + Python
+- `dev-go:1.23` - Go + Node.js + Python
+- `dev-java:21` - Java + Node.js + Python
+- `dev-ruby:3.3` - Ruby + Node.js + Python
+- `dev-rust:1.85` - Rust + Node.js + Python
 
-Each image also has an `-agents` variant (e.g. `warpdotdev/dev-rust:1.85-agents`) that includes preinstalled coding agent CLIs (Claude Code, Codex, Gemini CLI). Use the `-agents` variant when the user needs third-party coding CLIs; otherwise prefer the base tag for smaller image size.
+Each image may have an `-agents` variant (e.g. `dev-rust:1.85-agents`) that includes preinstalled coding agent CLIs (Claude Code, Codex, Gemini CLI). Use the `-agents` variant when the user needs third-party coding CLIs; otherwise prefer the base tag for smaller image size.
 
-Prefer Warp images when they match detected languages.
+Prefer prebuilt images when they match detected languages.
 
 **Alternative approaches:**
 - **Single dominant language**: Propose language-specific base (Debian/Ubuntu-based). Choose version based on repo contents.
@@ -83,7 +83,7 @@ b) Create Dockerfile
    - Focus: language runtimes, system packages, global tools
    - NOT project-specific dependencies
    - Propose Dockerfile, get confirmation
-   - Build and tag as `warp-env:<repo_name>`
+   - Build and tag as `oz-env:<repo_name>`
 c) Build for AMD64/x86_64 architecture
 d) Push to Docker Hub: `docker push`
    - Use `docker login` if needed
@@ -96,7 +96,7 @@ Handled automatically by Oz - repository cloned into environment.
 
 ### 6. Setup Commands Analysis
 
-Analyze repo documentation (README.md, WARP.md, docs/) to identify setup commands.
+Analyze repo documentation (README.md, OZ.md, docs/) to identify setup commands.
 
 **Be intelligent about base image:**
 - **Official language images** (node:*, python:*, golang:*, rust:*): Include runtime/package managers, NOT project deps → likely need dependency install commands

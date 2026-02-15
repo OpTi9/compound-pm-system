@@ -1,10 +1,10 @@
 # Oz Platform Skill
 
-A coding agent skill for interacting with the [Oz platform](https://docs.warp.dev/agent-platform/platform/warp-platform). Coding agents can use this skill to spawn and manage cloud agents, configure environments, and automate tasks via the Oz CLI, REST API, or GitHub Actions.
+A coding agent skill for interacting with an Oz control plane. Coding agents can use this skill to spawn and manage cloud agents, configure environments, and automate tasks via the Oz CLI, REST API, or GitHub Actions.
 
 ## Prerequisites
 
-Install the `warp` CLI. This comes pre-installed with [Warp](https://warp.dev), or you can install it separately [following our installation guide](https://docs.warp.dev/reference/cli).
+Install the Oz CLI (`oz`) and ensure it is authenticated against your control plane.
 
 ## Installation
 
@@ -12,7 +12,7 @@ Copy this repository into your agent's skills folder:
 
 - **Codex**: `~/.codex/skills/`
 - **Claude**: `~/.claude/skills/`
-- **Warp or other agents**: `~/.agents/skills/`
+- **Other agents**: `~/.agents/skills/`
 
 ```bash
 cp -r oz-agent-skill/.agents/skills/ ~/.agents/skills/
@@ -40,9 +40,4 @@ This skill allows the agent to:
 
 ## Documentation
 
-For usage instructions and detailed guides:
-
-- [Platform overview](https://docs.warp.dev/agent-platform/cloud-agents/cloud-agents-overview)
-- [Usage with cron scheduling](https://docs.warp.dev/agent-platform/cloud-agents/triggers/scheduled-agents)
-- [Usage within GitHub Actions](https://docs.warp.dev/agent-platform/cloud-agents/integrations/github-actions)
-- [Usage from application code with REST API or SDK](https://docs.warp.dev/agent-platform/cloud-agents/platform#oz-agent-api-and-sdk)
+Refer to your control plane's documentation for usage instructions and detailed guides.

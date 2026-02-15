@@ -403,7 +403,7 @@ class TestOzAPI:
         assert request.headers.get("Authorization") == f"Bearer {api_key}"
 
         with pytest.raises(OzAPIError):
-            with update_env(**{"OZ_API_KEY": Omit(), "WARP_API_KEY": Omit()}):
+            with update_env(**{"OZ_API_KEY": Omit()}):
                 client2 = OzAPI(base_url=base_url, api_key=None, _strict_response_validation=True)
             _ = client2
 
@@ -1284,7 +1284,7 @@ class TestAsyncOzAPI:
         assert request.headers.get("Authorization") == f"Bearer {api_key}"
 
         with pytest.raises(OzAPIError):
-            with update_env(**{"OZ_API_KEY": Omit(), "WARP_API_KEY": Omit()}):
+            with update_env(**{"OZ_API_KEY": Omit()}):
                 client2 = AsyncOzAPI(base_url=base_url, api_key=None, _strict_response_validation=True)
             _ = client2
 
