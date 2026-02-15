@@ -12,11 +12,12 @@ export function encodeAgentCallbackPayload(payload: AgentCallbackPayloadV1): str
 
 export function tryDecodeAgentCallbackPayload(raw: string): AgentCallbackPayloadV1 | null {
   if (typeof raw !== "string") return null
+  const input = raw.trimStart()
   // Fast path: most plain-text responses won't be JSON.
-  if (!raw.startsWith("{")) return null
+  if (!input.startsWith("{")) return null
 
   try {
-    const parsed = JSON.parse(raw) as Partial<AgentCallbackPayloadV1>
+    const parsed = JSON.parse(input) as Partial<AgentCallbackPayloadV1>
     if (parsed?.version !== 1) return null
     if (typeof parsed.roomId !== "string" || parsed.roomId.length === 0) return null
     if (typeof parsed.agentId !== "string" || parsed.agentId.length === 0) return null
@@ -34,4 +35,3 @@ export function tryDecodeAgentCallbackPayload(raw: string): AgentCallbackPayload
     return null
   }
 }
-
