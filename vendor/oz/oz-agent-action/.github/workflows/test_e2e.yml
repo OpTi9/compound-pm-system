@@ -1,0 +1,52 @@
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  run_warp_test:
+    name: Test running the Oz agent
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run Oz
+        uses: ./.
+        id: oz
+        with:
+          oz_channel: preview
+          prompt: Say hello
+          warp_api_key: ${{ secrets.WARP_API_KEY }}
+
+      - name: Verify output
+        env:
+          AGENT_OUTPUT: ${{ steps.oz.outputs.agent_output }}
+        run: |
+          if [[ -z "$AGENT_OUTPUT" ]]; then
+            echo "Warp produced no output"
+            exit 1
+          fi
+
+      - name: Run Oz with skill from repository
+        uses: ./.
+        id: oz-skill
+        with:
+          oz_channel: preview
+          skill: 'test-skill'
+          warp_api_key: ${{ secrets.WARP_API_KEY }}
+
+      - name: Verify skill output
+        env:
+          SKILL_OUTPUT: ${{ steps.oz-skill.outputs.agent_output }}
+        run: |
+          if [[ -z "$SKILL_OUTPUT" ]]; then
+            echo "Warp skill produced no output"
+            exit 1
+          fi
+          if [[ "$SKILL_OUTPUT" != *"GitHub Action skill test successful"* ]]; then
+            echo "Skill output did not contain expected message"
+            echo "Skill output: $SKILL_OUTPUT"
+            exit 1
+          fi
