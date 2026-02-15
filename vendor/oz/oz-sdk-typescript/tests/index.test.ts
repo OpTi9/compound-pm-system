@@ -322,13 +322,13 @@ describe('instantiate client', () => {
     test('empty env variable', () => {
       process.env['OZ_API_BASE_URL'] = ''; // empty
       const client = new OzAPI({ apiKey: 'My API Key' });
-      expect(client.baseURL).toEqual('http://localhost:8080/api/v1');
+      expect(client.baseURL).toEqual('http://localhost:3000/api/v1');
     });
 
     test('blank env variable', () => {
       process.env['OZ_API_BASE_URL'] = '  '; // blank
       const client = new OzAPI({ apiKey: 'My API Key' });
-      expect(client.baseURL).toEqual('http://localhost:8080/api/v1');
+      expect(client.baseURL).toEqual('http://localhost:3000/api/v1');
     });
 
     test('in request options', () => {

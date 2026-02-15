@@ -10,7 +10,7 @@
  *
  * Env vars (reads from .env.local automatically via dotenv):
  *   OZ_API_KEY       – Oz API key (preferred; WARP_API_KEY is a deprecated alias)
- *   OZ_API_BASE_URL  – Oz API base URL (must include /api/v1; e.g. http://localhost:8080/api/v1)
+ *   OZ_API_BASE_URL  – Oz API base URL (must include /api/v1; e.g. http://localhost:3000/api/v1)
  *   OZ_API_URL       – Optional root URL (e.g. http://localhost:8080). If set, overrides OZ_API_BASE_URL.
  */
 
@@ -29,7 +29,7 @@ const API_BASE =
   process.env.OZ_API_URL ||
   (process.env.OZ_API_BASE_URL
     ? process.env.OZ_API_BASE_URL.replace(/\/api\/v1\/?$/, "")
-    : "http://localhost:8080")
+    : "http://localhost:3000")
 const API_KEY = process.env.OZ_API_KEY || process.env.WARP_API_KEY
 const ENVIRONMENT_ID = process.env.OZ_ENVIRONMENT_ID || process.env.WARP_ENVIRONMENT_ID
 

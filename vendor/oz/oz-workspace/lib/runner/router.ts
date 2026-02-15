@@ -69,8 +69,7 @@ function loadCandidate(providerKey: string, fallbackType?: ProviderType): Provid
 
   const apiKey =
     env(providerEnvName(providerKey, "API_KEY")) ||
-    env("OZ_PROVIDER_API_KEY") ||
-    env("OZ_API_KEY")
+    env("OZ_PROVIDER_API_KEY")
 
   const baseUrl =
     type === "anthropic" || type === "cli"

@@ -118,6 +118,8 @@ export async function runAgent(options: RunAgentOptions): Promise<string> {
           roomId: options.roomId,
           agentId: options.agentId,
           userId: options.userId ?? null,
+          title: "Local run",
+          prompt: options.prompt,
           harness: agent.harness,
           providerKey: "pending",
           providerType: "pending",
@@ -170,7 +172,7 @@ export async function getTaskStatus(taskId: string, userId?: string | null): Pro
     return {
       taskId,
       state,
-      title: run.harness ? `${run.harness} run` : undefined,
+      title: run.title || (run.harness ? `${run.harness} run` : undefined),
       statusMessage: run.errorMessage ?? undefined,
     }
   }

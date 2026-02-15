@@ -204,6 +204,9 @@ model AgentRun {
   agentId     String
   userId      String?
 
+  title       String
+  prompt      String
+
   harness     String
   providerKey String
   providerType String

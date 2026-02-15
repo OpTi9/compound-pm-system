@@ -67,7 +67,7 @@ uv build
 - Both inherit from `SyncAPIClient` and `AsyncAPIClient` base classes
 - Support for both `httpx` (default) and `aiohttp` (optional) HTTP backends
 - API key authentication via `Authorization: Bearer` header
-- Default base URL: `http://localhost:8080/api/v1` (override with `OZ_API_BASE_URL`)
+- Default base URL: `http://localhost:3000/api/v1` (override with `OZ_API_BASE_URL`)
 
 **Resource Structure**:
 - Resources are organized hierarchically (e.g., `client.agent.tasks.retrieve()`)

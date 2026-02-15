@@ -1,0 +1,4 @@
+-- AlterTable
+ALTER TABLE "AgentRun" ADD COLUMN "title" TEXT NOT NULL DEFAULT '';
+ALTER TABLE "AgentRun" ADD COLUMN "prompt" TEXT NOT NULL DEFAULT '';
+

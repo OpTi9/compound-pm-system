@@ -79,7 +79,7 @@ class OzAPI(SyncAPIClient):
         if base_url is None:
             base_url = os.environ.get("OZ_API_BASE_URL")
         if base_url is None:
-            base_url = "http://localhost:8080/api/v1"
+            base_url = "http://localhost:3000/api/v1"
 
         super().__init__(
             version=__version__,
@@ -253,7 +253,7 @@ class AsyncOzAPI(AsyncAPIClient):
         if base_url is None:
             base_url = os.environ.get("OZ_API_BASE_URL")
         if base_url is None:
-            base_url = "http://localhost:8080/api/v1"
+            base_url = "http://localhost:3000/api/v1"
 
         super().__init__(
             version=__version__,
