@@ -24,6 +24,12 @@ export async function runLocalAgent(opts: {
   userId: string | null
   prompt: string
 }): Promise<void> {
+  const existingRun = await prisma.agentRun.findUnique({
+    where: { id: opts.taskId },
+    select: { state: true },
+  })
+  if (existingRun?.state === "CANCELLED") return
+
   const agent = await prisma.agent.findUnique({
     where: { id: opts.agentId },
     select: { id: true, name: true, harness: true, systemPrompt: true },
@@ -46,13 +52,14 @@ export async function runLocalAgent(opts: {
 
   // If we're completely saturated and queueing is enabled, mark QUEUED while waiting.
   while (response === null) {
-    let attemptedAny = false
+    const runState = await prisma.agentRun.findUnique({ where: { id: opts.taskId }, select: { state: true } })
+    if (runState?.state === "CANCELLED") return
+
     for (const candidate of candidates) {
       if (await providerSaturated(candidate)) continue
-      attemptedAny = true
 
       await prisma.agentRun.updateMany({
-        where: { id: opts.taskId },
+        where: { id: opts.taskId, state: { notIn: ["CANCELLED"] } },
         data: {
           providerKey: candidate.providerKey,
           providerType: candidate.type,
@@ -125,11 +132,14 @@ export async function runLocalAgent(opts: {
     const waitMs = Math.min((resetMs ?? 5000) + 250, maxWaitMs)
 
     await prisma.agentRun.updateMany({
-      where: { id: opts.taskId },
+      where: { id: opts.taskId, state: { notIn: ["CANCELLED"] } },
       data: { state: "QUEUED" },
     })
     await sleep(waitMs)
   }
+
+  const finalState = await prisma.agentRun.findUnique({ where: { id: opts.taskId }, select: { state: true } })
+  if (finalState?.state === "CANCELLED") return
 
   // Persist the agent response as if it came from the callback handler.
   await prisma.message.upsert({
@@ -149,7 +159,7 @@ export async function runLocalAgent(opts: {
   })
 
   await prisma.agentRun.updateMany({
-    where: { id: opts.taskId },
+    where: { id: opts.taskId, state: { notIn: ["CANCELLED"] } },
     data: { state: "SUCCEEDED", completedAt: new Date(), errorMessage: null },
   })
 }
