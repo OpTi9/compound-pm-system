@@ -10,6 +10,25 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
+function clampInt(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min
+  return Math.min(Math.max(Math.floor(n), min), max)
+}
+
+function parseTsIdCursor(raw: string | null): { ts: Date; id: string } | null {
+  const s = (raw || "").trim()
+  if (!s) return null
+  const [tsRaw, id] = s.split("|")
+  if (!tsRaw || !id) return null
+  const ts = new Date(tsRaw)
+  if (!Number.isFinite(ts.getTime())) return null
+  return { ts, id }
+}
+
+function encodeTsIdCursor(ts: Date, id: string): string {
+  return `${ts.toISOString()}|${id}`
+}
+
 export async function GET(request: Request) {
   try {
     const userId = await getAuthenticatedUserId()
@@ -18,7 +37,8 @@ export async function GET(request: Request) {
     const chainId = (searchParams.get("chainId") || "").trim()
     const status = normalizeWorkItemStatus(searchParams.get("status"))
     const type = (searchParams.get("type") || "").trim()
-    const limit = Math.min(Math.max(Number(searchParams.get("limit") || "200"), 1), 500)
+    const limit = clampInt(Number(searchParams.get("limit") || "200"), 1, 500)
+    const cursor = parseTsIdCursor(searchParams.get("cursor"))
 
     if (roomId) {
       const room = await prisma.room.findUnique({ where: { id: roomId, userId }, select: { id: true } })
@@ -32,12 +52,28 @@ export async function GET(request: Request) {
     if (status) where.status = status
     if (type) where.type = type
 
-    const orderBy = chainId ? { createdAt: "asc" as const } : { createdAt: "desc" as const }
+    const ascending = Boolean(chainId)
+    const orderBy = ascending
+      ? [{ createdAt: "asc" as const }, { id: "asc" as const }]
+      : [{ createdAt: "desc" as const }, { id: "desc" as const }]
+    if (cursor) {
+      // Stable pagination on (createdAt, id) with direction matching the list.
+      const op = ascending ? "gt" : "lt"
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        {
+          OR: [
+            { createdAt: { [op]: cursor.ts } },
+            { AND: [{ createdAt: cursor.ts }, { id: { [op]: cursor.id } }] },
+          ],
+        },
+      ]
+    }
 
-    const items = await prisma.workItem.findMany({
+    const rows = await prisma.workItem.findMany({
       where,
       orderBy,
-      take: limit,
+      take: limit + 1,
       include: {
         agent: { select: { id: true, name: true, color: true, icon: true, status: true, activeRoomId: true } },
         room: { select: { id: true, name: true } },
@@ -45,7 +81,11 @@ export async function GET(request: Request) {
       },
     })
 
-    return NextResponse.json({
+    const hasMore = rows.length > limit
+    const items = hasMore ? rows.slice(0, limit) : rows
+    const nextCursor = hasMore ? encodeTsIdCursor(items[items.length - 1].createdAt, items[items.length - 1].id) : null
+
+    const res = NextResponse.json({
       items: items.map((w) => ({
         id: w.id,
         type: w.type,
@@ -69,7 +109,10 @@ export async function GET(request: Request) {
         agent: w.agent,
         epic: w.epic,
       })),
+      nextCursor,
     })
+    if (nextCursor) res.headers.set("X-OZ-Next-Cursor", nextCursor)
+    return res
   } catch (error) {
     if (error instanceof AuthError) return unauthorizedResponse()
     console.error("GET /api/work-items error:", error)

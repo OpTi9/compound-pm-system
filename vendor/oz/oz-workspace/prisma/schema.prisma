@@ -310,6 +310,7 @@ model KnowledgeItem {
 
   room             Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   sourcePrd        Prd?   @relation(fields: [sourcePrdId], references: [id], onDelete: SetNull)
+  sourceWorkItem   WorkItem? @relation("KnowledgeSourceWorkItem", fields: [sourceWorkItemId], references: [id], onDelete: SetNull)
   createdByUser    User?  @relation("KnowledgeCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
   createdByAgent   Agent? @relation("KnowledgeCreatedByAgent", fields: [createdByAgentId], references: [id], onDelete: SetNull)
 
@@ -356,6 +357,7 @@ model WorkItem {
   agent       Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
   sourceTask  Task? @relation(fields: [sourceTaskId], references: [id], onDelete: SetNull)
   epic        Epic? @relation(fields: [epicId], references: [id], onDelete: SetNull)
+  knowledgeItems KnowledgeItem[] @relation("KnowledgeSourceWorkItem")
 
   @@index([status, leaseExpiresAt])
   @@index([leaseOwner])

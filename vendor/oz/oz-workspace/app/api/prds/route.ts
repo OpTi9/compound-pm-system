@@ -10,12 +10,33 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
+function clampInt(n: number, min: number, max: number): number {
+  if (!Number.isFinite(n)) return min
+  return Math.min(Math.max(Math.floor(n), min), max)
+}
+
+function parseTsIdCursor(raw: string | null): { ts: Date; id: string } | null {
+  const s = (raw || "").trim()
+  if (!s) return null
+  const [tsRaw, id] = s.split("|")
+  if (!tsRaw || !id) return null
+  const ts = new Date(tsRaw)
+  if (!Number.isFinite(ts.getTime())) return null
+  return { ts, id }
+}
+
+function encodeTsIdCursor(ts: Date, id: string): string {
+  return `${ts.toISOString()}|${id}`
+}
+
 export async function GET(request: Request) {
   try {
     const userId = await getAuthenticatedUserId()
     const { searchParams } = new URL(request.url)
     const roomId = (searchParams.get("roomId") || "").trim()
     const status = normalizePrdStatus(searchParams.get("status"))
+    const limit = clampInt(Number(searchParams.get("limit") || "200"), 1, 200)
+    const cursor = parseTsIdCursor(searchParams.get("cursor"))
 
     if (roomId) {
       const room = await prisma.room.findUnique({ where: { id: roomId, userId }, select: { id: true } })
@@ -26,11 +47,23 @@ export async function GET(request: Request) {
       ? { roomId }
       : { room: { userId } }
     if (status) where.status = status
+    if (cursor) {
+      // Stable pagination on (updatedAt, id) descending.
+      where.AND = [
+        ...(Array.isArray(where.AND) ? where.AND : []),
+        {
+          OR: [
+            { updatedAt: { lt: cursor.ts } },
+            { AND: [{ updatedAt: cursor.ts }, { id: { lt: cursor.id } }] },
+          ],
+        },
+      ]
+    }
 
-    const items = await prisma.prd.findMany({
+    const rows = await prisma.prd.findMany({
       where,
-      orderBy: { updatedAt: "desc" },
-      take: 200,
+      orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
+      take: limit + 1,
       select: {
         id: true,
         title: true,
@@ -42,7 +75,13 @@ export async function GET(request: Request) {
       },
     })
 
-    return NextResponse.json({ items })
+    const hasMore = rows.length > limit
+    const items = hasMore ? rows.slice(0, limit) : rows
+    const nextCursor = hasMore ? encodeTsIdCursor(items[items.length - 1].updatedAt, items[items.length - 1].id) : null
+
+    const res = NextResponse.json({ items, nextCursor })
+    if (nextCursor) res.headers.set("X-OZ-Next-Cursor", nextCursor)
+    return res
   } catch (error) {
     if (error instanceof AuthError) return unauthorizedResponse()
     console.error("GET /api/prds error:", error)

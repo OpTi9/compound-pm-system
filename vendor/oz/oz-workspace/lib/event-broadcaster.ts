@@ -17,9 +17,48 @@ type Subscriber = (event: BroadcastEvent) => void
 
 const STREAM_MAXLEN = 1000
 const REDIS_COMMAND_TIMEOUT_MS = 8_000
+const REDIS_XADD_MAX_ATTEMPTS = Math.min(Math.max(Number(process.env.OZ_REDIS_XADD_MAX_ATTEMPTS || "3"), 1), 10)
+const REDIS_XADD_RETRY_BASE_MS = Math.min(Math.max(Number(process.env.OZ_REDIS_XADD_RETRY_BASE_MS || "80"), 10), 5_000)
 
 function streamKey(roomId: string) {
   return `room:${roomId}:events`
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function xaddWithRetry(event: BroadcastEvent): Promise<void> {
+  if (!redis) return
+
+  let payload: { type: string; data: string }
+  try {
+    payload = { type: event.type, data: JSON.stringify(event.data) }
+  } catch (err) {
+    console.error("[event-broadcaster] Failed to serialize event data:", err)
+    return
+  }
+
+  for (let attempt = 1; attempt <= REDIS_XADD_MAX_ATTEMPTS; attempt++) {
+    try {
+      await redis.xadd(
+        streamKey(event.roomId),
+        "*",
+        payload,
+        { trim: { type: "MAXLEN", threshold: STREAM_MAXLEN, comparison: "~" as const } },
+      )
+      return
+    } catch (err) {
+      if (attempt === REDIS_XADD_MAX_ATTEMPTS) {
+        console.error("[event-broadcaster] Redis XADD failed (giving up):", err)
+        return
+      }
+      const jitter = Math.floor(Math.random() * 30)
+      const backoff = Math.min(REDIS_XADD_RETRY_BASE_MS * (2 ** (attempt - 1)) + jitter, 5_000)
+      console.warn(`[event-broadcaster] Redis XADD failed (attempt ${attempt}); retrying in ${backoff}ms`)
+      await sleep(backoff)
+    }
+  }
 }
 
 // ─── Raw Upstash REST API calls (bypass SDK for reads) ─────
@@ -125,12 +164,8 @@ export const eventBroadcaster = {
 
     // If Redis is configured, also persist to a stream for cross-instance delivery
     if (redis) {
-      redis
-        .xadd(streamKey(event.roomId), "*", {
-          type: event.type,
-          data: JSON.stringify(event.data),
-        }, { trim: { type: "MAXLEN", threshold: STREAM_MAXLEN, comparison: "~" as const } })
-        .catch((err) => console.error("[event-broadcaster] Redis XADD error:", err))
+      // Best-effort persistence; retries reduce transient drop risk without forcing callers async.
+      void xaddWithRetry(event)
     }
   },
 
