@@ -21,6 +21,7 @@ labels=(
   "version:minor|New features|0E8A16"
   "version:patch|Bug fixes|1D76DB"
   "version:rc|Release candidate|5319E7"
+  "oz-agent|Trigger Oz agent automation|5319E7"
   "status:backlog|Not started|D4C5F9"
   "status:analysis|In analysis|FBCA04"
   "status:planning|In planning|FBCA04"
@@ -39,4 +40,3 @@ for entry in "${labels[@]}"; do
 done
 
 echo "Done."
-

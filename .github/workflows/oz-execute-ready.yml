@@ -1,0 +1,204 @@
+name: Oz Execute Ready Plan (Parallel Tasks)
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  extract:
+    if: github.event.label.name == 'status:ready'
+    runs-on: ubuntu-latest
+    permissions:
+      issues: read
+      contents: read
+    outputs:
+      tasks_json: ${{ steps.extract.outputs.tasks_json }}
+      base_branch: ${{ steps.extract.outputs.base_branch }}
+      issue_number: ${{ steps.extract.outputs.issue_number }}
+      issue_title: ${{ steps.extract.outputs.issue_title }}
+    steps:
+      - name: Extract Tasks From Latest Avery Plan Comment
+        id: extract
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            if (!issue) throw new Error("Missing issue in event payload");
+
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner,
+              repo,
+              issue_number: issue.number,
+              per_page: 100,
+            });
+
+            const marker = "## Avery Plan (auto)";
+            const candidates = comments
+              .filter(c => typeof c.body === "string" && c.body.includes(marker))
+              .reverse();
+
+            if (candidates.length === 0) {
+              throw new Error("No Avery plan comment found. Run the planning workflow first.");
+            }
+
+            const body = candidates[0].body;
+            const m = body.match(/```json\\s*([\\s\\S]*?)\\s*```/i);
+            if (!m) {
+              throw new Error("Found Avery plan comment, but no ```json``` block inside it.");
+            }
+
+            const raw = (m[1] || "").trim();
+            let parsed;
+            try {
+              parsed = JSON.parse(raw);
+            } catch (e) {
+              throw new Error("Failed to parse Avery JSON plan: " + (e?.message || String(e)));
+            }
+
+            const tasks = Array.isArray(parsed?.tasks) ? parsed.tasks : [];
+            const norm = tasks
+              .map(t => ({
+                title: String(t?.title || "").trim(),
+                prompt: String(t?.prompt || "").trim(),
+              }))
+              .filter(t => t.title && t.prompt);
+
+            if (norm.length === 0) {
+              throw new Error("No tasks[] found in Avery plan JSON.");
+            }
+
+            // Hard cap to avoid surprising fan-out.
+            const capped = norm.slice(0, 8);
+
+            core.setOutput("tasks_json", JSON.stringify(capped));
+            core.setOutput("base_branch", `beta/issue-${issue.number}`);
+            core.setOutput("issue_number", String(issue.number));
+            core.setOutput("issue_title", String(issue.title || "").trim());
+
+  prepare_base:
+    needs: extract
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create/Update Base Branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ needs.extract.outputs.base_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin main --depth=1
+          git checkout -B "$BASE_BRANCH" origin/main
+          git push origin "$BASE_BRANCH" --force
+
+      - name: Comment Base Branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const base = "${{ needs.extract.outputs.base_branch }}";
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: `Started execution. Base branch: \`${base}\``,
+            });
+
+  task:
+    needs: [extract, prepare_base]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    strategy:
+      fail-fast: false
+      matrix:
+        task: ${{ fromJSON(needs.extract.outputs.tasks_json) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create Task Branch
+        env:
+          BASE_BRANCH: ${{ needs.extract.outputs.base_branch }}
+          ISSUE_NUMBER: ${{ needs.extract.outputs.issue_number }}
+          TASK_TITLE: ${{ matrix.task.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_BRANCH" --depth=1
+          git checkout -B "$BASE_BRANCH" "origin/$BASE_BRANCH"
+
+          slug="$(echo "$TASK_TITLE" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g' | sed -E 's/^-+|-+$//g' | cut -c1-40)"
+          if [[ -z "$slug" ]]; then slug="task"; fi
+          BRANCH="task/issue-${ISSUE_NUMBER}-${slug}"
+          echo "BRANCH=$BRANCH" >> "$GITHUB_ENV"
+          git checkout -b "$BRANCH"
+
+      - name: Run Oz Agent (Implement Task)
+        id: agent
+        uses: ./.github/actions/oz-agent-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          prompt: |
+            You are an expert software engineer working in a GitHub Actions checkout.
+
+            Implement this task as a focused PR.
+
+            Task title: ${{ matrix.task.title }}
+
+            Task prompt:
+            ${{ matrix.task.prompt }}
+
+            Rules:
+            - Make the smallest correct change.
+            - Add or update tests when appropriate.
+            - Run relevant checks if feasible.
+            - Do not paste diffs in output; summarize changes and mention touched files.
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
+          oz_api_base_url: ${{ secrets.OZ_API_BASE_URL }}
+          oz_cli_path: ${{ vars.OZ_CLI_PATH || 'oz' }}
+          oz_cli_download_url: ${{ secrets.OZ_CLI_DEB_URL }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
+
+      - name: Commit and Open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_BRANCH: ${{ needs.extract.outputs.base_branch }}
+          ISSUE_NUMBER: ${{ needs.extract.outputs.issue_number }}
+          ISSUE_TITLE: ${{ needs.extract.outputs.issue_title }}
+          TASK_TITLE: ${{ matrix.task.title }}
+          AGENT_OUTPUT: ${{ steps.agent.outputs.agent_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$(git status --porcelain)" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body $'No changes for task: '"$TASK_TITLE"$'\n\n**Agent Output:**\n'"${AGENT_OUTPUT:-"(empty)"}"
+            exit 0
+          fi
+
+          git config user.name "Oz Agent"
+          git config user.email "oz-agent@users.noreply.github.com"
+          git add .
+          git commit -m "Issue #${ISSUE_NUMBER}: ${TASK_TITLE}"
+          git push origin "$BRANCH" --force
+
+          title="Issue #${ISSUE_NUMBER}: ${TASK_TITLE}"
+          body=$'Task branch PR for issue #'"${ISSUE_NUMBER}"$'.\n\n**Task**: '"${TASK_TITLE}"$'\n\n**Agent Summary**:\n'"${AGENT_OUTPUT:-"(empty)"}"$'\n\nBase: '"${BASE_BRANCH}"
+
+          pr_url="$(gh pr create --title "$title" --body "$body" --base "$BASE_BRANCH" --head "$BRANCH")"
+          gh issue comment "$ISSUE_NUMBER" --body "Opened task PR: $pr_url"
+
