@@ -3,10 +3,21 @@
 
 **Version:** 1.0  
 **Date:** 2026-02-15  
-**Status:** Design Phase  
+**Status:** Design doc (workflow) + Implemented Oz stack (runtime)  
 **Related:** [CCPM](https://github.com/automazeio/ccpm) | [Compound Engineering](https://github.com/EveryInc/compound-engineering-plugin)
 
 ---
+
+## 0. Current Repo State (2026-02-15)
+
+This repository vendors a self-hosted Oz stack under `vendor/oz/` that is runnable today:
+
+- `oz-workspace` (UI) with local and remote runner modes
+- `oz-control-plane` (Option 2) with `/api/v1` runs + environments + worker WebSocket
+- `oz-agent-worker` (Go) executing runs in Docker using `oz-agent-sidecar`
+- Multi-provider routing, quotas/fallback/queueing, run tracking, streaming, artifacts
+
+The rest of this document describes the intended “Compound PM System” workflow and philosophy. Treat it as a spec and roadmap; it is not a complete command framework in this repo yet.
 
 ## 1. EXECUTIVE SUMMARY
 

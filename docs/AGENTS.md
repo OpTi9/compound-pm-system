@@ -7,6 +7,8 @@
 
 ---
 
+Note: This file is a workflow spec. The runnable software in this repo today is the self-hosted Oz stack under `vendor/oz/`. See `docs/OZ_STACK.md` for how agent execution is currently implemented.
+
 ## 🤖 AVERY (The Architect)
 
 ### Identity

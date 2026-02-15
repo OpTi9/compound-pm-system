@@ -9,8 +9,8 @@ Self-hosted worker for Oz cloud agents.
 ## Requirements
 
 - Docker daemon (accessible via socket or TCP)
-- Service account API key with team scope
-- Network egress to your Oz control plane
+- `OZ_API_KEY` set to the control plane admin key (`OZ_ADMIN_API_KEY`), since the worker WebSocket requires admin auth
+- Network access to your control plane (defaults to `ws://localhost:8080`)
 
 ## Usage
 
@@ -20,27 +20,26 @@ The worker needs access to the Docker daemon to spawn task containers. Mount the
 
 ```bash
 docker run -v /var/run/docker.sock:/var/run/docker.sock \
-  -e OZ_API_KEY="ok-abc123" \
-  warpdotdev/oz-agent-worker --worker-id "my-worker"
+  -e OZ_API_KEY="change-me" \
+  -e OZ_WS_URL="ws://localhost:8080/api/v1/selfhosted/worker/ws" \
+  -e OZ_SERVER_ROOT_URL="http://localhost:8080" \
+  oz-agent-worker:dev --worker-id "my-worker"
 ```
 
 > **Note:** Mounting the Docker socket gives the container access to the host's Docker daemon. This is required for the worker to create and manage task containers.
 
-### Go Install
-
-```bash
-go install github.com/warpdotdev/oz-agent-worker@latest
-oz-agent-worker --api-key "wk-abc123" --worker-id "my-worker"
-```
-
 ### Build from Source
 
 ```bash
-git clone https://github.com/warpdotdev/oz-agent-worker.git
-cd oz-agent-worker
+cd vendor/oz/oz-agent-worker
 go build -o oz-agent-worker
-./oz-agent-worker --api-key "wk-abc123" --worker-id "my-worker"
+OZ_API_KEY="change-me" ./oz-agent-worker --worker-id "my-worker"
 ```
+
+### Config
+
+- `OZ_WS_URL` (default: `ws://localhost:8080/api/v1/selfhosted/worker/ws`)
+- `OZ_SERVER_ROOT_URL` (default: `http://localhost:8080`)
 
 ## Docker Connectivity
 

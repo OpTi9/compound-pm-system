@@ -3,9 +3,25 @@
 
 **Version:** 1.0  
 **Date:** 2026-02-15  
-**Status:** Specification
+**Status:** Spec + Implemented in Oz Router
 
 ---
+
+## Implementation Mapping (What’s Actually Running)
+
+The rolling-window quota + ordered fallback + optional queueing described in this doc is implemented in the vendored Oz stack:
+
+- Router: `vendor/oz/oz-control-plane/src/runner/router.ts` and `vendor/oz/oz-workspace/lib/runner/router.ts`
+- Persistence: `ProviderUsage` table in SQLite via Prisma
+- Configuration: `OZ_PROVIDER_*` env vars (per-provider quota, base URL, model, type)
+- Behavior:
+  - Providers are selected per harness (`claude-code`, `codex`, `glm`, `kimi`, `custom`).
+  - Saturation is tracked in `ProviderUsage` and only bumped on successful calls.
+  - If all candidates are saturated:
+    - `OZ_QUEUE_ON_SATURATION=true` waits up to `OZ_QUEUE_MAX_WAIT_SECONDS` for the earliest reset.
+    - Otherwise the API returns `429`.
+
+The rest of this document remains useful as rationale and policy guidance (subscription-aware routing), but the source of truth for behavior is the router code + env vars.
 
 ## 1. OVERVIEW
 

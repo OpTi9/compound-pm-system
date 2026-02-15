@@ -14,8 +14,8 @@ import (
 var CLI struct {
 	APIKey        string   `help:"API key for authentication" env:"OZ_API_KEY"`
 	WorkerID      string   `help:"Worker host identifier" required:""`
-	WebSocketURL  string   `default:"ws://localhost:8080/api/v1/selfhosted/worker/ws" hidden:""`
-	ServerRootURL string   `default:"http://localhost:8080" hidden:""`
+	WebSocketURL  string   `help:"Control plane worker WebSocket URL" default:"ws://localhost:8080/api/v1/selfhosted/worker/ws" env:"OZ_WS_URL"`
+	ServerRootURL string   `help:"Control plane server root URL (http base)" default:"http://localhost:8080" env:"OZ_SERVER_ROOT_URL"`
 	LogLevel      string   `help:"Log level (debug, info, warn, error)" default:"info" enum:"debug,info,warn,error"`
 	NoCleanup     bool     `help:"Do not remove containers after execution (for debugging)"`
 	Volumes       []string `help:"Volume mounts for task containers (format: HOST_PATH:CONTAINER_PATH or HOST_PATH:CONTAINER_PATH:MODE)" short:"v"`

@@ -31,8 +31,7 @@ Oz Workspace is an open-source collaborative AI agent workspace. It provides a c
 ### 1. Clone & install
 
 ```bash
-git clone https://github.com/warpdotdev/oz-workspace.git
-cd oz-workspace
+cd vendor/oz/oz-workspace
 npm install
 ```
 
@@ -67,7 +66,15 @@ AUTH_SECRET="<your-random-secret>"
 # Oz API Key — used to authenticate to your agent API
 OZ_API_KEY="<your-oz-api-key>"
 
-# Environment ID — defined by your control plane
+# Runner mode:
+# - local (default): run providers directly from the Next.js server
+# - remote: call an Oz-compatible control plane at OZ_API_BASE_URL
+OZ_RUNNER_MODE=local
+
+# Optional (remote mode): Oz API base URL (must include /api/v1)
+# OZ_API_BASE_URL="http://localhost:8080/api/v1"
+
+# Optional: default environment id for remote worker mode (an environment object from /api/v1/environments)
 OZ_ENVIRONMENT_ID="<your-environment-id>"
 
 # Agent callback URL — agents need a publicly accessible URL to POST responses
