@@ -60,6 +60,20 @@ type WorkItem = {
   agent?: { id: string; name: string; color: string; icon: string } | null
 }
 
+type KnowledgeItem = {
+  id: string
+  roomId: string
+  kind: string
+  title: string
+  content: string
+  tags?: string[]
+  sourcePrdId: string | null
+  sourceWorkItemId: string | null
+  createdAt: string
+  updatedAt: string
+  createdByAgent?: { id: string; name: string; color: string; icon: string } | null
+}
+
 async function fetchJson<T>(url: string): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
   const res = await fetch(url, { cache: "no-store" })
   if (!res.ok) {
@@ -101,6 +115,7 @@ export default function WorkPage() {
   const [selectedPrdId, setSelectedPrdId] = React.useState<string>("")
   const [prdDetail, setPrdDetail] = React.useState<PrdDetail | null>(null)
   const [workItems, setWorkItems] = React.useState<WorkItem[]>([])
+  const [knowledge, setKnowledge] = React.useState<KnowledgeItem[]>([])
 
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -112,6 +127,12 @@ export default function WorkPage() {
   const [enqueueOpen, setEnqueueOpen] = React.useState(false)
   const [enqueueAgentId, setEnqueueAgentId] = React.useState("")
   const [enqueuePrompt, setEnqueuePrompt] = React.useState("")
+
+  const [addKnowledgeOpen, setAddKnowledgeOpen] = React.useState(false)
+  const [knowledgeKind, setKnowledgeKind] = React.useState("learning")
+  const [knowledgeTitle, setKnowledgeTitle] = React.useState("")
+  const [knowledgeContent, setKnowledgeContent] = React.useState("")
+  const [knowledgeTags, setKnowledgeTags] = React.useState("")
 
   React.useEffect(() => {
     fetchRooms()
@@ -163,11 +184,23 @@ export default function WorkPage() {
     setWorkItems(res.data.items)
   }, [])
 
+  const refreshKnowledge = React.useCallback(async (opts: { roomId: string; prdId?: string }) => {
+    const qs = new URLSearchParams({ roomId: opts.roomId, limit: "200" })
+    if (opts.prdId) qs.set("sourcePrdId", opts.prdId)
+    const res = await fetchJson<{ items: KnowledgeItem[] }>(`/api/knowledge?${qs.toString()}`)
+    if (!res.ok) {
+      setError(res.error)
+      return
+    }
+    setKnowledge(res.data.items)
+  }, [])
+
   React.useEffect(() => {
     setPrds([])
     setSelectedPrdId("")
     setPrdDetail(null)
     setWorkItems([])
+    setKnowledge([])
     setError(null)
     if (!roomId) return
     refreshPrds().catch(() => {})
@@ -176,11 +209,13 @@ export default function WorkPage() {
   React.useEffect(() => {
     setPrdDetail(null)
     setWorkItems([])
+    setKnowledge([])
     setError(null)
     if (!selectedPrdId) return
     refreshPrdDetail(selectedPrdId).catch(() => {})
     refreshWorkItems(selectedPrdId).catch(() => {})
-  }, [selectedPrdId, refreshPrdDetail, refreshWorkItems])
+    refreshKnowledge({ roomId, prdId: selectedPrdId }).catch(() => {})
+  }, [selectedPrdId, refreshPrdDetail, refreshWorkItems, refreshKnowledge, roomId])
 
   const handleCreatePrd = async () => {
     if (!roomId || !newPrdTitle.trim()) return
@@ -296,6 +331,64 @@ export default function WorkPage() {
       await refreshPrdDetail(selectedPrdId)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to cancel")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handleAddKnowledge = async () => {
+    if (!roomId) return
+    if (!knowledgeTitle.trim() || !knowledgeContent.trim()) return
+    setBusy(true)
+    setError(null)
+    try {
+      const tags = knowledgeTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean)
+
+      const res = await fetch("/api/knowledge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId,
+          kind: knowledgeKind,
+          title: knowledgeTitle.trim(),
+          content: knowledgeContent,
+          tags,
+          sourcePrdId: selectedPrdId || undefined,
+        }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed" }))
+        throw new Error(body.error || `Failed (${res.status})`)
+      }
+
+      setAddKnowledgeOpen(false)
+      setKnowledgeKind("learning")
+      setKnowledgeTitle("")
+      setKnowledgeContent("")
+      setKnowledgeTags("")
+      await refreshKnowledge({ roomId, prdId: selectedPrdId || undefined })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to add knowledge")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const deleteKnowledge = async (id: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/knowledge/${encodeURIComponent(id)}`, { method: "DELETE" })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed" }))
+        throw new Error(body.error || `Failed (${res.status})`)
+      }
+      await refreshKnowledge({ roomId, prdId: selectedPrdId || undefined })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to delete knowledge")
     } finally {
       setBusy(false)
     }
@@ -421,9 +514,25 @@ export default function WorkPage() {
                           onClick={() => {
                             refreshPrdDetail(prdDetail.id)
                             refreshWorkItems(prdDetail.id)
+                            refreshKnowledge({ roomId, prdId: prdDetail.id })
                           }}
                         >
                           Refresh Chain
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          disabled={busy}
+                          onClick={() => {
+                            setKnowledgeKind("learning")
+                            setKnowledgeTitle("")
+                            setKnowledgeContent("")
+                            setKnowledgeTags("")
+                            setAddKnowledgeOpen(true)
+                          }}
+                        >
+                          Add Knowledge
                         </Button>
                         <div className="flex-1" />
                         {prdDetail.roomId && (
@@ -505,6 +614,48 @@ export default function WorkPage() {
                       )}
                     </CardContent>
                   </Card>
+
+                  <Card>
+                    <CardHeader>
+                      <CardTitle>Knowledge</CardTitle>
+                      <CardDescription>
+                        {knowledge.length} item(s) {selectedPrdId ? "(from this PRD)" : ""}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      {knowledge.length === 0 ? (
+                        <div className="text-xs text-muted-foreground">
+                          No knowledge items yet. When a PRD completes, Avery will auto-extract learnings. You can also add items manually.
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {knowledge.map((k) => (
+                            <div key={k.id} className="rounded-md border p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline">{(k.kind || "learning").toUpperCase()}</Badge>
+                                    <span className="truncate text-xs font-medium">{k.title}</span>
+                                  </div>
+                                  {k.createdByAgent?.name && (
+                                    <div className="mt-1 text-[0.625rem] text-muted-foreground">
+                                      By {k.createdByAgent.name} · Updated {fmtShort(k.updatedAt)}
+                                    </div>
+                                  )}
+                                </div>
+                                <Button size="sm" variant="ghost" className="h-7 text-xs" disabled={busy} onClick={() => deleteKnowledge(k.id)}>
+                                  Delete
+                                </Button>
+                              </div>
+                              <pre className="mt-2 max-h-[180px] overflow-auto rounded-md bg-muted/30 p-2 text-[0.6875rem] leading-relaxed whitespace-pre-wrap">
+                                {k.content}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
                 </>
               )}
             </div>
@@ -570,7 +721,51 @@ export default function WorkPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={addKnowledgeOpen} onOpenChange={setAddKnowledgeOpen}>
+        <DialogContent className="sm:max-w-[700px]">
+          <DialogHeader>
+            <DialogTitle>Add Knowledge</DialogTitle>
+            <DialogDescription>
+              Persist a reusable pattern/gotcha/decision so agents can reference it in future runs.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="grid grid-cols-[180px_1fr] gap-3">
+              <div>
+                <div className="text-xs font-medium">Kind</div>
+                <Select value={knowledgeKind} onValueChange={setKnowledgeKind}>
+                  <SelectTrigger className="text-xs">
+                    <SelectValue placeholder="Kind" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="learning">learning</SelectItem>
+                    <SelectItem value="pattern">pattern</SelectItem>
+                    <SelectItem value="gotcha">gotcha</SelectItem>
+                    <SelectItem value="decision">decision</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div>
+                <div className="text-xs font-medium">Title</div>
+                <Input value={knowledgeTitle} onChange={(e) => setKnowledgeTitle(e.target.value)} placeholder="Short, descriptive title" />
+              </div>
+            </div>
+            <div>
+              <div className="text-xs font-medium">Tags (comma-separated)</div>
+              <Input value={knowledgeTags} onChange={(e) => setKnowledgeTags(e.target.value)} placeholder="e.g. prisma, migrations, orchestrator" />
+            </div>
+            <div>
+              <div className="text-xs font-medium">Content</div>
+              <Textarea value={knowledgeContent} onChange={(e) => setKnowledgeContent(e.target.value)} rows={8} placeholder="Actionable note (include paths/commands/invariants)..." />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setAddKnowledgeOpen(false)} disabled={busy}>Cancel</Button>
+            <Button onClick={handleAddKnowledge} disabled={busy || !knowledgeTitle.trim() || !knowledgeContent.trim()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
-

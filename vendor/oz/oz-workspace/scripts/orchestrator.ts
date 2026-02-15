@@ -132,6 +132,29 @@ function parseDecomposeTasks(text: string): Array<{ title: string; prompt: strin
   return out
 }
 
+function parseLearnings(text: string): Array<{ kind?: string; title: string; content: string; tags?: string[] }> | null {
+  const jsonText = extractJsonBlock(text)
+  if (!jsonText) return null
+  let parsed: any
+  try {
+    parsed = JSON.parse(jsonText)
+  } catch {
+    return null
+  }
+  const items = parsed?.learnings || parsed?.knowledge || parsed?.items
+  if (!Array.isArray(items)) return null
+  const out: Array<{ kind?: string; title: string; content: string; tags?: string[] }> = []
+  for (const i of items) {
+    const title = typeof i?.title === "string" ? i.title.trim() : ""
+    const content = typeof i?.content === "string" ? i.content.trim() : ""
+    const kind = typeof i?.kind === "string" ? i.kind.trim() : undefined
+    const tags = Array.isArray(i?.tags) ? i.tags.filter((t: any) => typeof t === "string").map((t: string) => t.trim()).filter(Boolean).slice(0, 20) : undefined
+    if (!title || !content) continue
+    out.push({ kind, title, content, tags })
+  }
+  return out
+}
+
 async function isAgentInRoom(roomId: string, agentId: string): Promise<boolean> {
   const m = await prisma.roomAgent.findUnique({
     where: { roomId_agentId: { roomId, agentId } },
@@ -152,6 +175,98 @@ async function computeDefaultImplAgentId(roomId: string): Promise<string | null>
       return n && n !== "rex" && n !== "avery"
     })
   return pick?.id || null
+}
+
+async function resolveAveryAgentId(roomId: string): Promise<string | null> {
+  const roomAgents = await prisma.roomAgent.findMany({
+    where: { roomId },
+    include: { agent: { select: { id: true, name: true } } },
+  })
+  const avery = roomAgents.map((ra) => ra.agent).find((a) => (a?.name || "").trim().toLowerCase() === "avery")
+  return avery?.id || null
+}
+
+async function enqueueLearningsForPrd(prdId: string) {
+  const prd = await prisma.prd.findUnique({ where: { id: prdId }, select: { id: true, title: true, content: true, roomId: true } }).catch(() => null)
+  if (!prd) return
+
+  const existing = await prisma.workItem.findFirst({
+    where: { chainId: prdId, type: "learnings", status: { in: ["QUEUED", "CLAIMED", "RUNNING", "SUCCEEDED"] } },
+    select: { id: true },
+  })
+  if (existing) return
+
+  const averyId = await resolveAveryAgentId(prd.roomId)
+  if (!averyId) return
+
+  // Collect a compact trace of task/review outputs for this PRD.
+  const chainItems = await prisma.workItem.findMany({
+    where: { chainId: prdId, type: { in: ["task", "review"] } },
+    orderBy: { createdAt: "asc" },
+    select: { id: true, type: true, runId: true, status: true, agentId: true, payload: true, lastError: true },
+    take: 80,
+  }).catch(() => [])
+
+  const excerpts: string[] = []
+  for (const w of chainItems) {
+    const payload = safeJsonParse<any>(w.payload, {})
+    const taskTitle = typeof payload?.title === "string" ? payload.title.trim() : ""
+    const taskPrompt = typeof payload?.prompt === "string" ? payload.prompt.trim() : ""
+    let msgText = ""
+    if (w.runId) {
+      const msg = await prisma.message.findUnique({ where: { id: w.runId }, select: { content: true } }).catch(() => null)
+      msgText = (msg?.content || "").trim()
+    }
+    const header = `${w.type.toUpperCase()} ${taskTitle ? `(${taskTitle}) ` : ""}[${w.status}]`
+    const body = [
+      taskPrompt ? `Prompt:\n${truncate(taskPrompt, 1200)}` : "",
+      msgText ? `Output:\n${truncate(msgText, 1600)}` : "",
+      w.lastError ? `Error:\n${truncate(w.lastError, 600)}` : "",
+    ].filter(Boolean).join("\n\n")
+    if (body) excerpts.push(`${header}\n${body}`)
+    if (excerpts.join("\n\n---\n\n").length > 24_000) break
+  }
+
+  const learningsPrompt = [
+    "You are Avery. Extract durable knowledge from this PRD execution so future work is faster and safer.",
+    "",
+    "OUTPUT FORMAT (mandatory): return a single JSON object, prefer a ```json code fence```.",
+    "Schema:",
+    "{",
+    '  "learnings": [',
+    '    { "kind": "pattern|gotcha|decision|learning", "title": "...", "content": "...", "tags": ["optional"] }',
+    "  ]",
+    "}",
+    "",
+    "Rules:",
+    "- Only include items that are reusable beyond this PRD (patterns, gotchas, decisions, conventions).",
+    "- Keep each content entry concise but actionable (include commands, paths, or invariants when relevant).",
+    "- Avoid repeating the PRD itself; focus on what we learned while executing it.",
+    "",
+    `PRD: ${prd.title}`,
+    "",
+    "PRD content:",
+    truncate(prd.content || "(empty)", 10_000),
+    "",
+    excerpts.length ? "Execution trace excerpts:\n\n" + excerpts.join("\n\n---\n\n") : "Execution trace excerpts: (none)",
+  ].join("\n")
+
+  await prisma.workItem.create({
+    data: {
+      type: "learnings",
+      status: "QUEUED",
+      payload: JSON.stringify({
+        roomId: prd.roomId,
+        agentId: averyId,
+        prompt: learningsPrompt,
+        prdId,
+      }),
+      chainId: prdId,
+      sourceItemId: null,
+      roomId: prd.roomId,
+      agentId: averyId,
+    },
+  })
 }
 
 async function maybeMarkPrdCompleted(prdId: string) {
@@ -175,7 +290,10 @@ async function maybeMarkPrdCompleted(prdId: string) {
   if (tasksNotSucceeded !== 0) return
   if (inFlight !== 0) return
 
-  await prisma.prd.updateMany({ where: { id: prdId, status: "ACTIVE" }, data: { status: "COMPLETED" } })
+  const updated = await prisma.prd.updateMany({ where: { id: prdId, status: "ACTIVE" }, data: { status: "COMPLETED" } })
+  if (updated.count === 1) {
+    await enqueueLearningsForPrd(prdId).catch(() => {})
+  }
 }
 
 async function scheduleReviewForTask(item: WorkItemRow, payload: any, promptText: string) {
@@ -581,7 +699,7 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
         // Best-effort: may complete PRD if this was the last pending item and all reviews are done.
         await maybeMarkPrdCompleted(chainId).catch(() => {})
       }
-    } else if (item.type === "review") {
+  } else if (item.type === "review") {
       const reviewText = (res.message as any)?.content || (res.message as any)?.message?.content || ""
       const parsed = parseReviewOutcome(reviewText)
       if (parsed?.outcome === "APPROVED") {
@@ -618,6 +736,40 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
         const prdId = typeof payload?.prdId === "string" ? payload.prdId.trim() : chainId
         if (prdId) {
           await prisma.prd.updateMany({ where: { id: prdId, status: "DECOMPOSING" }, data: { status: "DRAFT" } }).catch(() => {})
+        }
+      }
+    } else if (item.type === "learnings") {
+      const learningsText = (res.message as any)?.content || ""
+      const prdId = typeof payload?.prdId === "string" ? payload.prdId.trim() : chainId
+      const roomIdForKnowledge = roomId
+
+      const parsed = parseLearnings(learningsText)
+      if (!parsed || parsed.length === 0 || !prdId) {
+        await prisma.workItem.updateMany({
+          where: { id: item.id, status: "SUCCEEDED" },
+          data: { status: "FAILED", lastError: "Invalid learnings format (expected JSON with learnings[])" },
+        })
+      } else {
+        for (const l of parsed) {
+          const stableKey = crypto.createHash("sha1").update(`${prdId}\n${l.kind || ""}\n${l.title}\n${l.content}`).digest("hex")
+          const markerId = `learn:${prdId}:${stableKey}`
+          const marker = await prisma.agentCallback.findUnique({ where: { id: markerId }, select: { id: true } }).catch(() => null)
+          if (marker) continue
+          await prisma.agentCallback.create({ data: { id: markerId, response: "1" } }).catch(() => null)
+
+          await prisma.knowledgeItem.create({
+            data: {
+              roomId: roomIdForKnowledge,
+              kind: (l.kind || "learning").slice(0, 40),
+              title: l.title.slice(0, 200),
+              content: l.content,
+              tagsJson: JSON.stringify((l.tags || []).slice(0, 20)),
+              sourcePrdId: prdId,
+              sourceWorkItemId: item.id,
+              createdByUserId: null,
+              createdByAgentId: agentId,
+            },
+          }).catch(() => {})
         }
       }
     }

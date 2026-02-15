@@ -23,6 +23,7 @@ model User {
   tasks         Task[]
   settings      Setting[]
   prdsCreated   Prd[] @relation("PrdCreatedBy")
+  knowledgeCreated KnowledgeItem[] @relation("KnowledgeCreatedByUser")
 }
 
 model Room {
@@ -43,6 +44,7 @@ model Room {
   notifications Notification[]
   tasks         Task[]
   prds          Prd[]
+  knowledge     KnowledgeItem[]
   orchestrations AgentOrchestration[]
 }
 
@@ -73,6 +75,7 @@ model Agent {
   createdTasks  Task[]   @relation("TaskCreator")
   ledOrchestrations AgentOrchestration[]
   orchestrationChildren AgentOrchestrationChild[]
+  knowledgeCreated KnowledgeItem[] @relation("KnowledgeCreatedByAgent")
 }
 
 model RoomAgent {
@@ -265,6 +268,33 @@ model Prd {
   @@index([roomId])
   @@index([status])
   @@index([createdBy])
+}
+
+model KnowledgeItem {
+  id               String   @id @default(cuid())
+  roomId           String
+  kind             String   @default("learning") // learning|pattern|gotcha|decision
+  title            String
+  content          String   @default("") // markdown/plaintext
+  tagsJson         String   @default("[]") // JSON array of strings
+  sourcePrdId      String?
+  sourceWorkItemId String?
+  createdByUserId  String?
+  createdByAgentId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  room             Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  sourcePrd        Prd?   @relation(fields: [sourcePrdId], references: [id], onDelete: SetNull)
+  createdByUser    User?  @relation("KnowledgeCreatedByUser", fields: [createdByUserId], references: [id], onDelete: SetNull)
+  createdByAgent   Agent? @relation("KnowledgeCreatedByAgent", fields: [createdByAgentId], references: [id], onDelete: SetNull)
+
+  @@index([roomId])
+  @@index([kind])
+  @@index([sourcePrdId])
+  @@index([sourceWorkItemId])
+  @@index([createdByUserId])
+  @@index([createdByAgentId])
 }
 
 // Orchestrator queue items (PM layer "driver"). Kept separate from UI-facing Tasks.

@@ -11,6 +11,11 @@ function generateInvocationId() {
   return `inv_${crypto.randomUUID()}`
 }
 
+function truncateForPrompt(text: string, maxChars: number) {
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars)}\n\n[truncated ${text.length - maxChars} chars]`
+}
+
 export interface InvokeAgentParams {
   roomId: string
   agentId: string
@@ -153,6 +158,29 @@ export async function invokeAgent({
             .join("\n")
         : "No tasks yet."
 
+    // Knowledge compounding: include persisted learnings/patterns for this room.
+    const knowledgeRows = await prisma.knowledgeItem.findMany({
+      where: { roomId },
+      orderBy: { updatedAt: "desc" },
+      take: 12,
+      select: { kind: true, title: true, content: true },
+    }).catch(() => [])
+
+    const knowledgeContext =
+      knowledgeRows.length > 0
+        ? [
+            "PROJECT KNOWLEDGE (persisted learnings; treat as source of truth unless contradicted):",
+            ...knowledgeRows.map((k) => {
+              const kind = (k.kind || "learning").trim()
+              const title = (k.title || "").trim()
+              const body = (k.content || "").trim()
+              const one = body ? truncateForPrompt(body, 400) : ""
+              return `- [${kind}] ${title}${one ? `: ${one}` : ""}`
+            }),
+            "",
+          ].join("\n")
+        : ""
+
     // Remote runner modes (control plane / worker) currently do not provide a workspace callback/skill runtime.
     // The agent output is retrieved via run polling and persisted below.
     const callbackInstructions = `
@@ -177,7 +205,7 @@ To mention an agent, include @agent-name in your response message.
     const roomContext = room?.description
       ? `\nRoom: ${room.name}\nRoom description: ${room.description}\n`
       : ""
-    const fullPrompt = `${identityContext}\n${systemContext}\n\n${callbackInstructions}\n${taskInstructions}\n${notificationInstructions}\n${teammateInstructions}\n${roomContext}\nChat history:\n${chatHistory}\n\nUser request: ${prompt}`
+    const fullPrompt = `${identityContext}\n${systemContext}\n\n${callbackInstructions}\n${taskInstructions}\n${notificationInstructions}\n${teammateInstructions}\n${roomContext}\n${knowledgeContext}Chat history:\n${chatHistory}\n\nUser request: ${prompt}`
 
     console.log("[invokeAgent] Calling runAgent with invocationId:", invocationId)
     console.log("[invokeAgent] Prompt length:", fullPrompt.length)
