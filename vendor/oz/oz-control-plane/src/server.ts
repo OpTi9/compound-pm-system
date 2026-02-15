@@ -202,11 +202,28 @@ async function main() {
       newReqId()
     try { res.setHeader("X-Request-Id", reqId) } catch { /* ignore */ }
     const rlog = log.child({ req_id: reqId })
+    const startNs = process.hrtime.bigint()
+    const method = req.method || "GET"
+    let url: URL | null = null
+    try {
+      url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
+    } catch {
+      url = null
+    }
+    const pathname = url?.pathname || "/"
+
+    res.on("finish", () => {
+      const durMs = Number(process.hrtime.bigint() - startNs) / 1e6
+      rlog.info("http.response", {
+        method,
+        path: pathname,
+        status: res.statusCode,
+        duration_ms: Math.round(durMs),
+      })
+    })
 
     try {
-      const method = req.method || "GET"
-      const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
-      const pathname = url.pathname
+      if (!url) return json(res, 400, { error: "Invalid URL", request_id: reqId })
 
       rlog.info("http.request", {
         method,
@@ -537,7 +554,8 @@ async function main() {
           sendCancelToWorker(run.workerId, runID)
         }
         rlog.info("agent_run.cancelled", { run_id: runID, worker_id: run.workerId || null })
-        return json(res, 200, { status: "cancelled", request_id: reqId })
+        // SDK compatibility: cancel response is a JSON string (not an object).
+        return json(res, 200, "cancelled")
       }
 
       return json(res, 404, { error: "Not found", request_id: reqId })
