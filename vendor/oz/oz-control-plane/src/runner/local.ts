@@ -12,6 +12,7 @@ import {
 import { runOpenAICompatibleChat, runOpenAICompatibleChatStream } from "./openai_compatible.js"
 import { runAnthropicMessages, runAnthropicMessagesStream } from "./providers/anthropic.js"
 import { runCliProvider } from "./providers/cli.js"
+import { log } from "../log.js"
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
@@ -27,6 +28,7 @@ export async function runLocalAgent(opts: {
   prompt: string
   harness: string
 }): Promise<void> {
+  const rlog = log.child({ subsystem: "local-runner", run_id: opts.runId })
   const existing = await prisma.agentRun.findUnique({
     where: { id: opts.runId },
     select: { state: true, ownerKeyHash: true },
@@ -42,6 +44,7 @@ export async function runLocalAgent(opts: {
 
   const system = `You are an AI agent. Respond helpfully and concisely. The chat UI supports Markdown.`
   const candidates = await getProviderCandidatesForHarness(opts.harness)
+  rlog.info("run.start", { harness: opts.harness, candidates: candidates.map((c) => c.providerKey), prompt_length: opts.prompt.length })
 
   let response: string | null = null
   let lastErr: unknown = null
@@ -82,6 +85,7 @@ export async function runLocalAgent(opts: {
       })
 
       try {
+        rlog.info("provider.attempt", { provider_key: candidate.providerKey, provider_type: candidate.type, model: candidate.model })
         if (candidate.type === "anthropic") {
           if (!candidate.apiKey) throw new Error("Missing API key for Anthropic provider (set OZ_PROVIDER_CLAUDE_API_KEY or OZ_PROVIDER_API_KEY)")
           if (streamingEnabled()) {
@@ -152,6 +156,7 @@ export async function runLocalAgent(opts: {
         break
       } catch (err) {
         lastErr = err
+        rlog.warn("provider.error", { provider_key: candidate.providerKey }, err instanceof Error ? { err_message: err.message } : undefined)
         await handleProviderErrorScoped(candidate, err, ownerKeyHash)
         if (isRateLimitError(err)) continue
         throw err
@@ -166,6 +171,7 @@ export async function runLocalAgent(opts: {
         where: { id: opts.runId },
         data: { state: "FAILED", errorMessage: msg, completedAt: new Date() },
       })
+      rlog.warn("run.rate_limited", { message: msg })
       throw new RateLimitError(msg)
     }
 
@@ -177,6 +183,7 @@ export async function runLocalAgent(opts: {
       where: { id: opts.runId, state: { notIn: ["CANCELLED"] } },
       data: { state: "QUEUED" },
     })
+    rlog.info("run.queued", { wait_ms: waitMs })
     await sleep(waitMs)
   }
 
@@ -190,4 +197,5 @@ export async function runLocalAgent(opts: {
     where: { id: opts.runId, state: { notIn: ["CANCELLED"] } },
     data: { state: "SUCCEEDED", completedAt: new Date(), errorMessage: null, output },
   })
+  rlog.info("run.succeeded", { output_length: output.length })
 }

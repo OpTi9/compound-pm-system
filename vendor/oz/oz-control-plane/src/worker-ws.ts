@@ -5,6 +5,7 @@ import crypto from "node:crypto"
 
 import { prisma } from "./prisma.js"
 import { requireAuth } from "./auth.js"
+import { log } from "./log.js"
 
 const connectedWorkers = new Map<string, any>()
 
@@ -33,10 +34,6 @@ type WorkerMessage =
 
 function safeJsonParse(input: string): any | null {
   try { return JSON.parse(input) } catch { return null }
-}
-
-function nowIso() {
-  return new Date().toISOString()
 }
 
 function linesFromText(text: string | null | undefined): string[] {
@@ -76,8 +73,9 @@ export function attachWorkerWebSocket(server: http.Server) {
   wss.on("connection", (ws, req) => {
     const u = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
     const workerId = (u.searchParams.get("worker_id") || "").trim() || `worker_${crypto.randomUUID()}`
+    const wlog = log.child({ subsystem: "worker-ws", worker_id: workerId })
 
-    console.log(`[${nowIso()}] [worker-ws] connected worker_id=${workerId}`)
+    wlog.info("worker.connected")
 
     connectedWorkers.set(workerId, ws)
 
@@ -91,7 +89,7 @@ export function attachWorkerWebSocket(server: http.Server) {
     ws.on("close", () => {
       closed = true
       connectedWorkers.delete(workerId)
-      console.log(`[${nowIso()}] [worker-ws] disconnected worker_id=${workerId}`)
+      wlog.info("worker.disconnected")
 
       // Requeue tasks that were claimed but never started; fail in-progress tasks to avoid duplicates.
       prisma.agentRun
@@ -117,6 +115,7 @@ export function attachWorkerWebSocket(server: http.Server) {
         if (parsed.type === "task_claimed") {
           const taskId = parsed.data?.task_id
           if (!taskId) return
+          wlog.info("task.claimed", { task_id: taskId })
           // Only advance tasks this worker actually owns. This prevents one worker from
           // accidentally or maliciously "claiming" tasks assigned to a different worker.
           await prisma.agentRun.updateMany({
@@ -130,6 +129,7 @@ export function attachWorkerWebSocket(server: http.Server) {
           const artifacts = parsed.data?.artifacts
           const sessionLink = typeof parsed.data?.session_link === "string" ? parsed.data.session_link : null
           if (!taskId) return
+          wlog.warn("task.failed", { task_id: taskId, message: msg, output_length: (output || "").length })
           await prisma.agentRun.updateMany({
             where: { id: taskId, workerId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
             data: {
@@ -149,6 +149,7 @@ export function attachWorkerWebSocket(server: http.Server) {
           const sessionLink = typeof parsed.data?.session_link === "string" ? parsed.data.session_link : null
           if (!taskId) return
 
+          wlog.info("task.completed", { task_id: taskId, exit_code: exitCode, output_length: output.length })
           await prisma.agentRun.updateMany({
             where: { id: taskId, workerId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
             data: {
@@ -162,7 +163,7 @@ export function attachWorkerWebSocket(server: http.Server) {
           })
         }
       } catch (e) {
-        console.error("[worker-ws] message handling error:", e)
+        wlog.error("worker.message_handling_error", undefined, e)
       }
     })
 
@@ -216,6 +217,8 @@ export function attachWorkerWebSocket(server: http.Server) {
         type: "task_assignment",
         data: {
           task_id: claimed.id,
+          // Extra field: safe to include even if the worker ignores it.
+          trace_id: claimed.id,
           task: {
             id: claimed.id,
             title: claimed.title,
@@ -239,9 +242,10 @@ export function attachWorkerWebSocket(server: http.Server) {
       }
 
       try {
+        wlog.info("task.assigned", { task_id: claimed.id, docker_image: dockerImage })
         ws.send(JSON.stringify(msg))
       } catch (e) {
-        console.error("[worker-ws] send assignment failed:", e)
+        wlog.error("worker.send_assignment_failed", { task_id: claimed.id }, e)
         close()
       }
     }, 1500)

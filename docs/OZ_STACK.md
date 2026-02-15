@@ -116,6 +116,12 @@ In worker mode, the sidecar writes `/workspace/.oz/agent_output.txt`. The worker
 
 - `GET /health` returns `200` only if the HTTP server is up and the database is reachable.
 
+## Logging / Request IDs
+
+- Control plane logs are JSON lines by default (suitable for container logs).
+- Every HTTP response includes `X-Request-Id`. You can also pass `X-Request-Id` on requests to supply your own.
+- Configure verbosity with `OZ_LOG_LEVEL=debug|info|warn|error` on the control plane.
+
 ## Operational Hardening
 
 Control plane supports:

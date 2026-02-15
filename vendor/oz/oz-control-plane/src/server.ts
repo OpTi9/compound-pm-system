@@ -8,6 +8,7 @@ import { harnessFromModelId, json } from "./oz-api-shapes.js"
 import { runLocalAgent } from "./runner/local.js"
 import { attachWorkerWebSocket, sendCancelToWorker, type WorkerWsAttachment } from "./worker-ws.js"
 import { getProviderCandidatesForHarness } from "./runner/router.js"
+import { log, newReqId } from "./log.js"
 
 function envFlag(key: string, fallback = false): boolean {
   const raw = (process.env[key] ?? "").trim().toLowerCase()
@@ -59,7 +60,10 @@ async function validateProvidersOnStartup() {
   for (const h of harnesses) {
     try {
       const candidates = await getProviderCandidatesForHarness(h)
-      console.log(`[oz-control-plane] provider validation ok: harness=${h} candidates=${candidates.map((c) => c.providerKey).join(",")}`)
+      log.info("startup.provider_validation_ok", {
+        harness: h,
+        candidates: candidates.map((c) => c.providerKey),
+      })
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       throw new Error(`Provider validation failed for harness "${h}": ${msg}`)
@@ -87,14 +91,14 @@ function startRetentionLoop(): { stop: () => void } {
         },
       })
     } catch (e) {
-      console.error("[oz-control-plane] retention sweep failed:", e)
+      log.error("retention.sweep_failed", undefined, e)
     }
   }, intervalMs)
 
   // Don't keep the process alive solely for retention.
   ;(timer as any).unref?.()
 
-  console.log(`[oz-control-plane] retention enabled: deleting terminal runs after ${days} days (interval ${intervalMs}ms)`)
+  log.info("retention.enabled", { days, intervalMs })
   return { stop: () => clearInterval(timer) }
 }
 
@@ -192,25 +196,39 @@ async function main() {
   if (!Number.isFinite(port) || port <= 0) throw new Error("OZ_CONTROL_PLANE_PORT must be a positive number")
 
   const server = http.createServer(async (req, res) => {
+    const reqIdHeader = (req.headers["x-request-id"] || req.headers["x-oz-request-id"]) as any
+    const reqId =
+      (Array.isArray(reqIdHeader) ? reqIdHeader[0] : reqIdHeader)?.toString?.().trim?.() ||
+      newReqId()
+    try { res.setHeader("X-Request-Id", reqId) } catch { /* ignore */ }
+    const rlog = log.child({ req_id: reqId })
+
     try {
       const method = req.method || "GET"
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
       const pathname = url.pathname
 
+      rlog.info("http.request", {
+        method,
+        path: pathname,
+        query: url.search ? url.search.slice(1) : "",
+        remote: req.socket?.remoteAddress,
+      })
+
       if (pathname === "/health") {
         const db = await checkDb()
-        if (!db.ok) return json(res, 503, { ok: false, db: "error", error: db.error })
-        return json(res, 200, { ok: true, db: "ok" })
+        if (!db.ok) return json(res, 503, { ok: false, db: "error", error: db.error, request_id: reqId })
+        return json(res, 200, { ok: true, db: "ok", request_id: reqId })
       }
 
       if (!pathname.startsWith("/api/v1/")) return json(res, 404, { error: "Not found" })
 
       const auth = requireAuth({ headers: req.headers as any })
-      if (!auth.ok) return json(res, auth.status, auth.body)
+      if (!auth.ok) return json(res, auth.status, { ...auth.body, request_id: reqId })
 
       // Minimal stub.
       if (method === "GET" && pathname === "/api/v1/agent") {
-        return json(res, 200, { items: [] })
+        return json(res, 200, { items: [], request_id: reqId })
       }
 
       if (method === "POST" && pathname === "/api/v1/environments") {
@@ -218,13 +236,13 @@ async function main() {
         try {
           body = await readJson(req)
         } catch (e) {
-          if (e instanceof RequestTooLargeError) return json(res, 413, { error: "Request body too large" })
-          return json(res, 400, { error: "Invalid JSON" })
+          if (e instanceof RequestTooLargeError) return json(res, 413, { error: "Request body too large", request_id: reqId })
+          return json(res, 400, { error: "Invalid JSON", request_id: reqId })
         }
         const name = typeof body?.name === "string" ? body.name.trim() : ""
         const dockerImage = typeof body?.docker_image === "string" ? body.docker_image.trim() : ""
-        if (!name) return json(res, 400, { error: "name is required" })
-        if (!dockerImage) return json(res, 400, { error: "docker_image is required" })
+        if (!name) return json(res, 400, { error: "name is required", request_id: reqId })
+        if (!dockerImage) return json(res, 400, { error: "docker_image is required", request_id: reqId })
 
         const scope = typeof body?.scope === "string" ? body.scope.trim().toUpperCase() : ""
         const globalScope = auth.isAdmin && (body?.global === true || scope === "GLOBAL")
@@ -239,7 +257,7 @@ async function main() {
         const setupCommandsText = toLines(body?.setup_commands).join("\n")
         const envVarsText = envVarsToLines(body?.env_vars).join("\n")
         if (globalScope && envVarsText) {
-          return json(res, 400, { error: "Global environments cannot include env_vars (store secrets per-tenant)" })
+          return json(res, 400, { error: "Global environments cannot include env_vars (store secrets per-tenant)", request_id: reqId })
         }
 
         const created = await prisma.environment.create({
@@ -265,6 +283,7 @@ async function main() {
           scope: created.ownerKeyHash ? "OWNER" : "GLOBAL",
           created_at: created.createdAt.toISOString(),
           updated_at: created.updatedAt.toISOString(),
+          request_id: reqId,
         })
       }
 
@@ -287,6 +306,7 @@ async function main() {
             created_at: e.createdAt.toISOString(),
             updated_at: e.updatedAt.toISOString(),
           })),
+          request_id: reqId,
         })
       }
 
@@ -294,9 +314,9 @@ async function main() {
       if (method === "GET" && envGet) {
         const envId = envGet[1]
         const env = await prisma.environment.findUnique({ where: { id: envId } })
-        if (!env) return json(res, 404, { error: "Not found" })
+        if (!env) return json(res, 404, { error: "Not found", request_id: reqId })
         if (!auth.isAdmin && env.ownerKeyHash && env.ownerKeyHash !== auth.ownerKeyHash) {
-          return json(res, 404, { error: "Not found" })
+          return json(res, 404, { error: "Not found", request_id: reqId })
         }
         return json(res, 200, {
           environment_id: env.id,
@@ -309,6 +329,7 @@ async function main() {
           scope: env.ownerKeyHash ? "OWNER" : "GLOBAL",
           created_at: env.createdAt.toISOString(),
           updated_at: env.updatedAt.toISOString(),
+          request_id: reqId,
         })
       }
 
@@ -318,11 +339,11 @@ async function main() {
         try {
           body = await readJson(req)
         } catch (e) {
-          if (e instanceof RequestTooLargeError) return json(res, 413, { error: "Request body too large" })
-          return json(res, 400, { error: "Invalid JSON" })
+          if (e instanceof RequestTooLargeError) return json(res, 413, { error: "Request body too large", request_id: reqId })
+          return json(res, 400, { error: "Invalid JSON", request_id: reqId })
         }
         const prompt = body?.prompt
-        if (typeof prompt !== "string" || !prompt.trim()) return json(res, 400, { error: "prompt is required" })
+        if (typeof prompt !== "string" || !prompt.trim()) return json(res, 400, { error: "prompt is required", request_id: reqId })
 
         const modelId = body?.config?.model_id ?? null
         const environmentId = typeof body?.config?.environment_id === "string" ? body.config.environment_id.trim() : ""
@@ -334,16 +355,25 @@ async function main() {
           const env = await prisma.environment.findUnique({ where: { id: environmentId } })
           if (env) {
             if (!auth.isAdmin && env.ownerKeyHash && env.ownerKeyHash !== auth.ownerKeyHash) {
-              return json(res, 404, { error: "Not found" })
+              return json(res, 404, { error: "Not found", request_id: reqId })
             }
             // Non-admins are allowed to use global envs, but global envs are forced to have no env_vars.
           }
           if (!env) {
             const allowRaw = (process.env.OZ_ALLOW_RAW_ENV_IMAGE || "").toLowerCase()
             const ok = allowRaw === "1" || allowRaw === "true"
-            if (!ok) return json(res, 404, { error: "Not found" })
+            if (!ok) return json(res, 404, { error: "Not found", request_id: reqId })
           }
         }
+
+        rlog.info("agent_run.create", {
+          run_id: runId,
+          harness,
+          model_id: modelId || null,
+          has_environment: Boolean(environmentId),
+          prompt_length: prompt.length,
+          auth_scope: auth.isAdmin ? "admin" : "tenant",
+        })
 
         await prisma.agentRun.create({
           data: {
@@ -378,6 +408,7 @@ async function main() {
               await runLocalAgent({ runId, prompt, harness })
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err)
+              rlog.error("agent_run.local_exec_failed", { run_id: runId }, err)
               await prisma.agentRun.updateMany({
                 where: { id: runId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
                 data: { state: "FAILED", errorMessage: msg, completedAt: new Date() },
@@ -386,7 +417,7 @@ async function main() {
           })
         }
 
-        return json(res, 200, { run_id: runId, task_id: runId })
+        return json(res, 200, { run_id: runId, task_id: runId, request_id: reqId })
       }
 
       const runsRoute = pathMatch(pathname, /^\/api\/v1\/agent\/runs\/?$/)
@@ -448,6 +479,7 @@ async function main() {
                 : null,
           })),
           next_cursor: nextCursor,
+          request_id: reqId,
         })
       }
 
@@ -455,8 +487,8 @@ async function main() {
       if (method === "GET" && runGet) {
         const runID = runGet[1]
         const run = await prisma.agentRun.findUnique({ where: { id: runID } })
-        if (!run) return json(res, 404, { error: "Not found" })
-        if (!auth.isAdmin && run.ownerKeyHash !== auth.ownerKeyHash) return json(res, 404, { error: "Not found" })
+        if (!run) return json(res, 404, { error: "Not found", request_id: reqId })
+        if (!auth.isAdmin && run.ownerKeyHash !== auth.ownerKeyHash) return json(res, 404, { error: "Not found", request_id: reqId })
 
         return json(res, 200, {
           created_at: run.queuedAt.toISOString(),
@@ -480,6 +512,7 @@ async function main() {
             : run.errorMessage
               ? { message: run.errorMessage }
               : null,
+          request_id: reqId,
         })
       }
 
@@ -487,8 +520,8 @@ async function main() {
       if (method === "POST" && runCancel) {
         const runID = runCancel[1]
         const run = await prisma.agentRun.findUnique({ where: { id: runID } })
-        if (!run) return json(res, 404, { error: "Not found" })
-        if (!auth.isAdmin && run.ownerKeyHash !== auth.ownerKeyHash) return json(res, 404, { error: "Not found" })
+        if (!run) return json(res, 404, { error: "Not found", request_id: reqId })
+        if (!auth.isAdmin && run.ownerKeyHash !== auth.ownerKeyHash) return json(res, 404, { error: "Not found", request_id: reqId })
 
         await prisma.agentRun.update({
           where: { id: runID },
@@ -503,18 +536,19 @@ async function main() {
           // Best-effort cancel propagation to a connected worker.
           sendCancelToWorker(run.workerId, runID)
         }
-        return json(res, 200, "cancelled")
+        rlog.info("agent_run.cancelled", { run_id: runID, worker_id: run.workerId || null })
+        return json(res, 200, { status: "cancelled", request_id: reqId })
       }
 
-      return json(res, 404, { error: "Not found" })
+      return json(res, 404, { error: "Not found", request_id: reqId })
     } catch (err) {
-      console.error("[oz-control-plane] request error:", err)
-      return json(res, 500, { error: err instanceof Error ? err.message : "Internal error" })
+      rlog.error("http.request_error", undefined, err)
+      return json(res, 500, { error: err instanceof Error ? err.message : "Internal error", request_id: reqId })
     }
   })
 
   server.listen(port, () => {
-    console.log(`[oz-control-plane] listening on http://localhost:${port}`)
+    log.info("startup.listening", { port })
   })
 
   const workerWs: WorkerWsAttachment = attachWorkerWebSocket(server)
@@ -524,7 +558,7 @@ async function main() {
   const shutdown = async (signal: string) => {
     if (shuttingDown) return
     shuttingDown = true
-    console.log(`[oz-control-plane] shutting down (${signal})...`)
+    log.info("shutdown.start", { signal })
 
     retention.stop()
     await workerWs.close().catch(() => {})
@@ -538,6 +572,7 @@ async function main() {
     })
 
     try { await prisma.$disconnect() } catch { /* ignore */ }
+    log.info("shutdown.complete", { signal })
     process.exit(0)
   }
 
@@ -546,6 +581,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e)
+  log.error("startup.fatal", undefined, e)
   process.exit(1)
 })
