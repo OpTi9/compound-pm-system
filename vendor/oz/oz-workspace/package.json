@@ -6,7 +6,8 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "smoke:ozapi": "tsx scripts/smoke-oz-api.ts"
+    "smoke:ozapi": "tsx scripts/smoke-oz-api.ts",
+    "smoke:uipath": "tsx scripts/smoke-ui-path.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.1.0",
