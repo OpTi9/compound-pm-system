@@ -1,12 +1,14 @@
 package worker
 
 import (
+	"archive/tar"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -34,6 +36,13 @@ const (
 	PongWait          = 60 * time.Second
 	WriteWait         = 10 * time.Second
 )
+
+type ExecutionResult struct {
+	Output      string
+	Artifacts   json.RawMessage
+	SessionLink string
+	ExitCode    int64
+}
 
 type Config struct {
 	APIKey        string
@@ -348,19 +357,23 @@ func (w *Worker) executeTask(ctx context.Context, assignment *types.TaskAssignme
 	taskID := assignment.TaskID
 	log.Infof(ctx, "Starting task execution: taskID=%s, title=%s", taskID, assignment.Task.Title)
 
-	output, err := w.executeTaskInDocker(ctx, assignment)
+	result, err := w.executeTaskInDocker(ctx, assignment)
 	if err != nil {
 		log.Errorf(ctx, "Task failed: taskID=%s, error=%v", taskID, err)
-		if statusErr := w.sendTaskFailed(taskID, fmt.Sprintf("Task failed: %v", err), output); statusErr != nil {
+		if statusErr := w.sendTaskFailed(taskID, fmt.Sprintf("Task failed: %v", err), result.Output, result.Artifacts, result.SessionLink); statusErr != nil {
 			log.Errorf(ctx, "Failed to send task failed message: %v", statusErr)
 		}
 		return
 	}
 
-	if statusErr := w.sendTaskCompleted(taskID, output, 0); statusErr != nil {
+	if statusErr := w.sendTaskCompleted(taskID, result.Output, result.ExitCode, result.Artifacts, result.SessionLink); statusErr != nil {
 		log.Errorf(ctx, "Failed to send task completed message: %v", statusErr)
 	}
-	log.Infof(ctx, "Task completed successfully: taskID=%s", taskID)
+	if result.ExitCode == 0 {
+		log.Infof(ctx, "Task completed successfully: taskID=%s", taskID)
+	} else {
+		log.Warnf(ctx, "Task completed with non-zero exit code: taskID=%s, exitCode=%d", taskID, result.ExitCode)
+	}
 }
 
 // pullImage pulls a Docker image. If authStr is non-empty, it will be used for registry authentication.
@@ -429,9 +442,10 @@ func (w *Worker) getRegistryAuth(ctx context.Context, imageName string) string {
 	return base64.URLEncoding.EncodeToString(authJSON)
 }
 
-func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.TaskAssignmentMessage) (string, error) {
+func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.TaskAssignmentMessage) (ExecutionResult, error) {
 	task := assignment.Task
 	dockerClient := w.dockerClient
+	result := ExecutionResult{ExitCode: -1}
 
 	var imageName string
 	if assignment.DockerImage != "" {
@@ -449,22 +463,22 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 
 	authStr := w.getRegistryAuth(ctx, imageName)
 	if err := w.pullImage(ctx, imageName, authStr); err != nil {
-		return "", err
+		return result, err
 	}
 
 	if assignment.SidecarImage == "" {
-		return "", fmt.Errorf("no sidecar image specified in assignment")
+		return result, fmt.Errorf("no sidecar image specified in assignment")
 	}
 
 	// Sidecar images are public, so no auth is needed
 	if err := w.pullImage(ctx, assignment.SidecarImage, ""); err != nil {
-		return "", err
+		return result, err
 	}
 
 	// Get the concrete image digest to ensure volume is rebuilt when the image changes
 	sidecarDigest, err := w.getImageDigest(ctx, assignment.SidecarImage)
 	if err != nil {
-		return "", fmt.Errorf("failed to get sidecar image digest: %w", err)
+		return result, fmt.Errorf("failed to get sidecar image digest: %w", err)
 	}
 
 	volumeName := sanitizeVolumeName(assignment.SidecarImage, sidecarDigest)
@@ -479,21 +493,21 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 			Name: volumeName,
 		})
 		if err != nil {
-			return fmt.Errorf("failed to create volume: %w", err)
+			return result, fmt.Errorf("failed to create volume: %w", err)
 		}
 		log.Debugf(ctx, "Created volume: %s at %s", volumeName, volumeResp.Mountpoint)
 
 		log.Debugf(ctx, "Copying warp agent from sidecar to volume (first time)")
 
 		if err := w.copySidecarFilesystemToVolume(ctx, dockerClient, assignment.SidecarImage, volumeName); err != nil {
-			return fmt.Errorf("failed to copy sidecar to volume: %w", err)
+			return result, fmt.Errorf("failed to copy sidecar to volume: %w", err)
 		}
 	}
 
 	// Prepare additional sidecar volumes (e.g., xvfb for computer use).
 	additionalSidecarBinds, err := w.prepareAdditionalSidecars(ctx, dockerClient, assignment.AdditionalSidecars)
 	if err != nil {
-		return "", err
+		return result, err
 	}
 
 	envVars := []string{
@@ -545,7 +559,7 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 
 	resp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
-		return "", fmt.Errorf("failed to create container: %w", err)
+		return result, fmt.Errorf("failed to create container: %w", err)
 	}
 
 	containerID := resp.ID
@@ -560,7 +574,7 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 	}()
 
 	if err := dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return "", fmt.Errorf("failed to start container: %w", err)
+		return result, fmt.Errorf("failed to start container: %w", err)
 	}
 
 	log.Debugf(ctx, "Started Docker container: %s", containerID)
@@ -571,11 +585,12 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 	select {
 	case err := <-errCh:
 		if err != nil {
-			return "", fmt.Errorf("error waiting for container: %w", err)
+			return result, fmt.Errorf("error waiting for container: %w", err)
 		}
 	case status := <-statusCh:
 		log.Debugf(ctx, "Container exited with status code: %d", status.StatusCode)
 		exitCode = status.StatusCode
+		result.ExitCode = status.StatusCode
 
 		var logErr error
 		logOutput, logErr = w.getContainerLogs(ctx, dockerClient, containerID)
@@ -590,20 +605,17 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 				}
 			}
 		}
-
-		if status.StatusCode != 0 {
-			// Preserve logs for reporting to the control plane.
-			if logErr != nil {
-				return "", fmt.Errorf("container exited with non-zero status: %d (failed to read logs: %v)", status.StatusCode, logErr)
-			}
-			return logOutput, fmt.Errorf("container exited with non-zero status: %d", status.StatusCode)
-		}
 	}
 
-	if exitCode == 0 {
-		return logOutput, nil
+	// Prefer output written by the sidecar (clean text) over Docker's multiplexed log stream.
+	if txt, err := w.copyTextFileFromContainer(ctx, dockerClient, containerID, "/workspace/.oz/agent_output.txt"); err == nil && txt != "" {
+		result.Output = txt
+	} else {
+		result.Output = logOutput
 	}
-	return logOutput, nil
+
+	result.Artifacts, result.SessionLink = extractArtifactsAndSession(result.Output)
+	return result, nil
 }
 
 func (w *Worker) getContainerLogs(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
@@ -627,6 +639,89 @@ func (w *Worker) getContainerLogs(ctx context.Context, dockerClient *client.Clie
 	}
 
 	return string(logBytes), nil
+}
+
+func (w *Worker) copyTextFileFromContainer(ctx context.Context, dockerClient *client.Client, containerID, path string) (string, error) {
+	rc, _, err := dockerClient.CopyFromContainer(ctx, containerID, path)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		_ = rc.Close()
+	}()
+
+	tr := tar.NewReader(rc)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		b, err := io.ReadAll(tr)
+		if err != nil {
+			return "", err
+		}
+		return string(b), nil
+	}
+	return "", fmt.Errorf("no file in tar stream")
+}
+
+func extractArtifactsAndSession(output string) (json.RawMessage, string) {
+	if output == "" {
+		return nil, ""
+	}
+
+	// Best-effort session link detection.
+	sessionLink := ""
+	sessionRe := regexp.MustCompile(`(?i)session[^\\n]*(https?://[^\\s"'<>]+)`)
+	if m := sessionRe.FindStringSubmatch(output); len(m) == 2 {
+		sessionLink = m[1]
+	}
+
+	prRe := regexp.MustCompile(`https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/pull/\\d+`)
+	raw := prRe.FindAllString(output, -1)
+	seen := make(map[string]bool)
+	type prData struct {
+		Branch string `json:"branch"`
+		URL    string `json:"url"`
+	}
+	type prArtifact struct {
+		ArtifactType string `json:"artifact_type"`
+		CreatedAt    string `json:"created_at"`
+		Data         prData `json:"data"`
+	}
+
+	var artifacts []prArtifact
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, u := range raw {
+		if seen[u] {
+			continue
+		}
+		seen[u] = true
+		artifacts = append(artifacts, prArtifact{
+			ArtifactType: "PULL_REQUEST",
+			CreatedAt:    now,
+			Data: prData{
+				Branch: "unknown",
+				URL:    u,
+			},
+		})
+	}
+
+	if len(artifacts) == 0 {
+		return nil, sessionLink
+	}
+
+	b, err := json.Marshal(artifacts)
+	if err != nil {
+		return nil, sessionLink
+	}
+	return json.RawMessage(b), sessionLink
 }
 
 // copySidecarFilesystemToVolume takes an image and creates a volume from its filesystem.
@@ -823,11 +918,13 @@ func (w *Worker) sendTaskClaimed(taskID string) error {
 	return w.sendMessage(msgBytes)
 }
 
-func (w *Worker) sendTaskFailed(taskID, message, output string) error {
+func (w *Worker) sendTaskFailed(taskID, message, output string, artifacts json.RawMessage, sessionLink string) error {
 	failedMsg := types.TaskFailedMessage{
-		TaskID:  taskID,
-		Message: message,
-		Output:  output,
+		TaskID:      taskID,
+		Message:     message,
+		Output:      output,
+		Artifacts:   artifacts,
+		SessionLink: sessionLink,
 	}
 
 	data, err := json.Marshal(failedMsg)
@@ -848,12 +945,14 @@ func (w *Worker) sendTaskFailed(taskID, message, output string) error {
 	return w.sendMessage(msgBytes)
 }
 
-func (w *Worker) sendTaskCompleted(taskID, output string, exitCode int64) error {
+func (w *Worker) sendTaskCompleted(taskID, output string, exitCode int64, artifacts json.RawMessage, sessionLink string) error {
 	completed := types.TaskCompletedMessage{
-		TaskID:   taskID,
-		WorkerID: w.config.WorkerID,
-		Output:   output,
-		ExitCode: exitCode,
+		TaskID:      taskID,
+		WorkerID:    w.config.WorkerID,
+		Output:      output,
+		Artifacts:   artifacts,
+		SessionLink: sessionLink,
+		ExitCode:    exitCode,
 	}
 
 	data, err := json.Marshal(completed)

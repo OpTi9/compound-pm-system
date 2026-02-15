@@ -53,6 +53,8 @@ type TaskFailedMessage struct {
 	TaskID  string `json:"task_id"`
 	Message string `json:"message"`
 	Output  string `json:"output,omitempty"`
+	Artifacts json.RawMessage `json:"artifacts,omitempty"`
+	SessionLink string `json:"session_link,omitempty"`
 }
 
 // TaskCompletedMessage is sent from worker to server when the task finishes (success or failure).
@@ -60,6 +62,8 @@ type TaskCompletedMessage struct {
 	TaskID    string `json:"task_id"`
 	WorkerID  string `json:"worker_id"`
 	Output    string `json:"output,omitempty"`
+	Artifacts json.RawMessage `json:"artifacts,omitempty"`
+	SessionLink string `json:"session_link,omitempty"`
 	ExitCode  int64  `json:"exit_code"`
 }
 

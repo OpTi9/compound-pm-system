@@ -16,6 +16,8 @@ model AgentRun {
   prompt       String
   environmentId String?
   workerId     String?
+  sessionLink  String?
+  artifactsJson String?
 
   harness      String
   providerKey  String
@@ -43,4 +45,19 @@ model ProviderUsage {
   windowSeconds   Int
   messagesUsed    Int
   messagesLimit   Int
+}
+
+model Environment {
+  id                String   @id
+  ownerKeyHash      String?
+  name              String
+  dockerImage       String
+  reposText         String   @default("") // newline-separated
+  setupCommandsText String   @default("") // newline-separated
+  envVarsText       String   @default("") // newline-separated KEY=VALUE
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([ownerKeyHash])
+  @@index([name])
 }

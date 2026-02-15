@@ -8,8 +8,11 @@ import { requireAuth } from "./auth.js"
 
 type WorkerMessage =
   | { type: "task_claimed"; data: { task_id: string; worker_id: string } }
-  | { type: "task_failed"; data: { task_id: string; message: string; output?: string } }
-  | { type: "task_completed"; data: { task_id: string; worker_id: string; output: string; exit_code: number } }
+  | { type: "task_failed"; data: { task_id: string; message: string; output?: string; artifacts?: any; session_link?: string } }
+  | {
+      type: "task_completed"
+      data: { task_id: string; worker_id: string; output: string; exit_code: number; artifacts?: any; session_link?: string }
+    }
 
 function safeJsonParse(input: string): any | null {
   try { return JSON.parse(input) } catch { return null }
@@ -17,6 +20,13 @@ function safeJsonParse(input: string): any | null {
 
 function nowIso() {
   return new Date().toISOString()
+}
+
+function linesFromText(text: string | null | undefined): string[] {
+  return (text || "")
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter(Boolean)
 }
 
 export function attachWorkerWebSocket(server: http.Server) {
@@ -79,6 +89,8 @@ export function attachWorkerWebSocket(server: http.Server) {
           const taskId = parsed.data?.task_id
           const msg = parsed.data?.message || "Task failed"
           const output = parsed.data?.output
+          const artifacts = parsed.data?.artifacts
+          const sessionLink = typeof parsed.data?.session_link === "string" ? parsed.data.session_link : null
           if (!taskId) return
           await prisma.agentRun.updateMany({
             where: { id: taskId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
@@ -87,6 +99,8 @@ export function attachWorkerWebSocket(server: http.Server) {
               workerId,
               errorMessage: msg,
               output: output || "",
+              artifactsJson: artifacts ? JSON.stringify(artifacts) : undefined,
+              sessionLink: sessionLink || undefined,
               completedAt: new Date(),
             },
           })
@@ -94,6 +108,8 @@ export function attachWorkerWebSocket(server: http.Server) {
           const taskId = parsed.data?.task_id
           const output = parsed.data?.output || ""
           const exitCode = Number(parsed.data?.exit_code ?? 0)
+          const artifacts = parsed.data?.artifacts
+          const sessionLink = typeof parsed.data?.session_link === "string" ? parsed.data.session_link : null
           if (!taskId) return
 
           await prisma.agentRun.updateMany({
@@ -103,6 +119,8 @@ export function attachWorkerWebSocket(server: http.Server) {
               workerId,
               output,
               errorMessage: exitCode === 0 ? null : `Worker exit code ${exitCode}`,
+              artifactsJson: artifacts ? JSON.stringify(artifacts) : undefined,
+              sessionLink: sessionLink || undefined,
               completedAt: new Date(),
             },
           })
@@ -133,7 +151,23 @@ export function attachWorkerWebSocket(server: http.Server) {
       const sidecarImage = (process.env.OZ_WORKER_SIDECAR_IMAGE || "").trim()
       if (!sidecarImage) return
 
-      const dockerImage = claimed.environmentId || "ubuntu:22.04"
+      let dockerImage = "ubuntu:22.04"
+      let envRepos: string[] = []
+      let envSetup: string[] = []
+      let envVarsLines: string[] = []
+
+      if (claimed.environmentId) {
+        const env = await prisma.environment.findUnique({ where: { id: claimed.environmentId } }).catch(() => null)
+        if (env) {
+          dockerImage = env.dockerImage
+          envRepos = linesFromText(env.reposText)
+          envSetup = linesFromText(env.setupCommandsText)
+          envVarsLines = linesFromText(env.envVarsText)
+        } else {
+          // Back-compat: environment_id may be a Docker image string.
+          dockerImage = claimed.environmentId
+        }
+      }
 
       // Atomically claim.
       const updated = await prisma.agentRun.updateMany({
@@ -162,6 +196,9 @@ export function attachWorkerWebSocket(server: http.Server) {
           env_vars: {
             OZ_API_KEY: process.env.OZ_ADMIN_API_KEY || "",
             OZ_TASK_PROMPT: claimed.prompt,
+            ...(envRepos.length ? { OZ_ENV_REPOS: envRepos.join("\n") } : {}),
+            ...(envSetup.length ? { OZ_ENV_SETUP_COMMANDS: envSetup.join("\n") } : {}),
+            ...(envVarsLines.length ? { OZ_ENV_VARS: envVarsLines.join("\n") } : {}),
           },
         },
       }
@@ -179,4 +216,3 @@ export function attachWorkerWebSocket(server: http.Server) {
     })
   })
 }
-

@@ -8,6 +8,48 @@ import { harnessFromModelId, json } from "./oz-api-shapes.js"
 import { runLocalAgent } from "./runner/local.js"
 import { attachWorkerWebSocket } from "./worker-ws.js"
 
+function toLines(v: any): string[] {
+  if (Array.isArray(v)) return v.filter((x) => typeof x === "string").map((s) => s.trim()).filter(Boolean)
+  if (typeof v === "string") return v.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+  return []
+}
+
+function envVarsToLines(v: any): string[] {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return []
+  const out: string[] = []
+  for (const [k, val] of Object.entries(v)) {
+    if (typeof k !== "string" || !k.trim()) continue
+    if (typeof val !== "string") continue
+    out.push(`${k}=${val}`)
+  }
+  return out
+}
+
+function envVarsTextToObject(text: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const line of (text || "").split(/\r?\n/)) {
+    const t = line.trim()
+    if (!t) continue
+    const idx = t.indexOf("=")
+    if (idx <= 0) continue
+    const k = t.slice(0, idx).trim()
+    const v = t.slice(idx + 1)
+    if (!k) continue
+    out[k] = v
+  }
+  return out
+}
+
+function safeParseJsonArray(text: string | null | undefined): any[] {
+  if (!text) return []
+  try {
+    const v = JSON.parse(text)
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
+}
+
 function readJson(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
     let body = ""
@@ -49,6 +91,96 @@ async function main() {
         return json(res, 200, { items: [] })
       }
 
+      if (method === "POST" && pathname === "/api/v1/environments") {
+        const body = await readJson(req).catch(() => null)
+        const name = typeof body?.name === "string" ? body.name.trim() : ""
+        const dockerImage = typeof body?.docker_image === "string" ? body.docker_image.trim() : ""
+        if (!name) return json(res, 400, { error: "name is required" })
+        if (!dockerImage) return json(res, 400, { error: "docker_image is required" })
+
+        const scope = typeof body?.scope === "string" ? body.scope.trim().toUpperCase() : ""
+        const globalScope = auth.isAdmin && (body?.global === true || scope === "GLOBAL")
+        const ownerKeyHash = globalScope
+          ? null
+          : auth.isAdmin
+            ? crypto.createHash("sha256").update(auth.token).digest("hex")
+            : auth.ownerKeyHash
+
+        const envId = `env_${crypto.randomUUID()}`
+        const reposText = toLines(body?.repos).join("\n")
+        const setupCommandsText = toLines(body?.setup_commands).join("\n")
+        const envVarsText = envVarsToLines(body?.env_vars).join("\n")
+
+        const created = await prisma.environment.create({
+          data: {
+            id: envId,
+            ownerKeyHash,
+            name,
+            dockerImage,
+            reposText,
+            setupCommandsText,
+            envVarsText,
+          },
+        })
+
+        return json(res, 200, {
+          environment_id: created.id,
+          id: created.id,
+          name: created.name,
+          docker_image: created.dockerImage,
+          repos: toLines(created.reposText),
+          setup_commands: toLines(created.setupCommandsText),
+          env_vars: envVarsTextToObject(created.envVarsText),
+          scope: created.ownerKeyHash ? "OWNER" : "GLOBAL",
+          created_at: created.createdAt.toISOString(),
+          updated_at: created.updatedAt.toISOString(),
+        })
+      }
+
+      const envList = pathMatch(pathname, /^\/api\/v1\/environments\/?$/)
+      if (method === "GET" && envList) {
+        const where = auth.isAdmin
+          ? {}
+          : { OR: [{ ownerKeyHash: auth.ownerKeyHash }, { ownerKeyHash: null }] }
+        const items = await prisma.environment.findMany({ where, orderBy: { updatedAt: "desc" }, take: 200 })
+        return json(res, 200, {
+          items: items.map((e) => ({
+            environment_id: e.id,
+            id: e.id,
+            name: e.name,
+            docker_image: e.dockerImage,
+            repos: toLines(e.reposText),
+            setup_commands: toLines(e.setupCommandsText),
+            env_vars: envVarsTextToObject(e.envVarsText),
+            scope: e.ownerKeyHash ? "OWNER" : "GLOBAL",
+            created_at: e.createdAt.toISOString(),
+            updated_at: e.updatedAt.toISOString(),
+          })),
+        })
+      }
+
+      const envGet = pathMatch(pathname, /^\/api\/v1\/environments\/([^/]+)\/?$/)
+      if (method === "GET" && envGet) {
+        const envId = envGet[1]
+        const env = await prisma.environment.findUnique({ where: { id: envId } })
+        if (!env) return json(res, 404, { error: "Not found" })
+        if (!auth.isAdmin && env.ownerKeyHash && env.ownerKeyHash !== auth.ownerKeyHash) {
+          return json(res, 404, { error: "Not found" })
+        }
+        return json(res, 200, {
+          environment_id: env.id,
+          id: env.id,
+          name: env.name,
+          docker_image: env.dockerImage,
+          repos: toLines(env.reposText),
+          setup_commands: toLines(env.setupCommandsText),
+          env_vars: envVarsTextToObject(env.envVarsText),
+          scope: env.ownerKeyHash ? "OWNER" : "GLOBAL",
+          created_at: env.createdAt.toISOString(),
+          updated_at: env.updatedAt.toISOString(),
+        })
+      }
+
       if (method === "POST" && pathname === "/api/v1/agent/run") {
         const body = await readJson(req).catch(() => null)
         const prompt = body?.prompt
@@ -60,6 +192,15 @@ async function main() {
         const runId = `run_${crypto.randomUUID()}`
         const now = new Date()
 
+        if (environmentId) {
+          const env = await prisma.environment.findUnique({ where: { id: environmentId } })
+          if (env) {
+            if (!auth.isAdmin && env.ownerKeyHash && env.ownerKeyHash !== auth.ownerKeyHash) {
+              return json(res, 404, { error: "Not found" })
+            }
+          }
+        }
+
         await prisma.agentRun.create({
           data: {
             id: runId,
@@ -70,6 +211,8 @@ async function main() {
             prompt,
             environmentId: environmentId || null,
             workerId: null,
+            sessionLink: null,
+            artifactsJson: null,
             harness,
             providerKey: "pending",
             providerType: "pending",
@@ -116,8 +259,8 @@ async function main() {
             task_id: run.id,
             title: run.title || "Run",
             state: run.state,
-            session_link: null,
-            artifacts: [],
+            session_link: run.sessionLink || null,
+            artifacts: safeParseJsonArray(run.artifactsJson),
             conversation_id: null,
             agent_config: {
               model_id: run.model,
@@ -150,8 +293,8 @@ async function main() {
           task_id: run.id,
           title: run.title || "Run",
           state: run.state,
-          session_link: null,
-          artifacts: [],
+          session_link: run.sessionLink || null,
+          artifacts: safeParseJsonArray(run.artifactsJson),
           conversation_id: null,
           agent_config: {
             model_id: run.model,
