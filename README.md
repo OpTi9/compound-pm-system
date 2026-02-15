@@ -7,6 +7,10 @@ This repo currently contains two things:
 
 If you are looking for the working software, start with the Oz stack docs: `docs/OZ_STACK.md`.
 
+## Security
+
+See `SECURITY.md` for operational security notes (secrets at rest, privileged worker/Docker model, agent internal API keys).
+
 ## What’s Implemented (Oz Stack)
 
 - `vendor/oz/oz-workspace`: Next.js workspace UI (rooms, agents, tasks, SSE updates)
@@ -24,4 +28,3 @@ If you are looking for the working software, start with the Oz stack docs: `docs
 - Repo architecture (current): `docs/ARCHITECTURE.md`
 - Rate limits (spec + implementation mapping): `docs/RATE-LIMIT-SYSTEM.md`
 - Compound PM workflow specs (design-stage): `DESIGN.md`, `docs/AGENTS.md`, `docs/AGENT-DRIVEN-RELEASES.md`, `docs/KIMI-SELF-EVOLUTION.md`
-

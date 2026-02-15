@@ -223,8 +223,17 @@ export function queueMaxWaitSeconds(): number {
 }
 
 export async function recordProviderCallStart(candidate: ProviderCandidate): Promise<void> {
+  // Back-compat shim for older callers that don't thread ownerKeyHash.
+  // Prefer recordProviderCallStartScoped() in all new code.
   if (!candidate.windowSeconds || !candidate.messagesLimit) return
-  // Back-compat shim (unscoped callers count against global).
+  const allow = (process.env.OZ_ALLOW_GLOBAL_QUOTA_SHIM || "").toLowerCase()
+  const ok = allow === "1" || allow === "true" || allow === "yes"
+  if (!ok) {
+    throw new Error(
+      "recordProviderCallStart() called without tenant scope. Use recordProviderCallStartScoped(candidate, ownerKeyHash). " +
+      "If you must temporarily preserve global behavior, set OZ_ALLOW_GLOBAL_QUOTA_SHIM=1."
+    )
+  }
   await bumpUsageScoped("global", candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
 }
 
@@ -237,6 +246,16 @@ export async function recordProviderCallStartScoped(
 }
 
 export async function handleProviderError(candidate: ProviderCandidate, err: unknown): Promise<void> {
+  // Back-compat shim for older callers that don't thread ownerKeyHash.
+  // Prefer handleProviderErrorScoped() in all new code.
+  const allow = (process.env.OZ_ALLOW_GLOBAL_QUOTA_SHIM || "").toLowerCase()
+  const ok = allow === "1" || allow === "true" || allow === "yes"
+  if (!ok) {
+    throw new Error(
+      "handleProviderError() called without tenant scope. Use handleProviderErrorScoped(candidate, err, ownerKeyHash). " +
+      "If you must temporarily preserve global behavior, set OZ_ALLOW_GLOBAL_QUOTA_SHIM=1."
+    )
+  }
   if (isRateLimitError(err)) {
     await markSaturatedScoped("global", candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
     return
