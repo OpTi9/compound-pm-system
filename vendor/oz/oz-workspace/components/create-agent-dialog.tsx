@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { IconPicker } from "@/components/icon-picker"
 import { useAgentStore } from "@/lib/stores"
 
@@ -32,6 +33,9 @@ export function CreateAgentDialog({
   const [name, setName] = React.useState("")
   const [environmentId, setEnvironmentId] = React.useState("")
   const [systemPrompt, setSystemPrompt] = React.useState("")
+  const [harness, setHarness] = React.useState<
+    "claude-code" | "codex" | "glm" | "kimi" | "custom" | "oz"
+  >("claude-code")
   const [color, setColor] = React.useState(AGENT_COLORS[0])
   const [icon, setIcon] = React.useState("robot")
   const [loading, setLoading] = React.useState(false)
@@ -44,7 +48,7 @@ export function CreateAgentDialog({
       await createAgent({
         name: name.trim(),
         environmentId: environmentId.trim(),
-        harness: "oz",
+        harness,
         systemPrompt: systemPrompt.trim(),
         color,
         icon,
@@ -53,6 +57,7 @@ export function CreateAgentDialog({
       setName("")
       setEnvironmentId("")
       setSystemPrompt("")
+      setHarness("claude-code")
       setColor(AGENT_COLORS[0])
       setIcon("robot")
     } finally {
@@ -102,6 +107,22 @@ export function CreateAgentDialog({
             <Field>
               <FieldLabel>Icon</FieldLabel>
               <IconPicker value={icon} onChange={setIcon} />
+            </Field>
+            <Field>
+              <FieldLabel>Harness</FieldLabel>
+              <Select value={harness} onValueChange={(v) => setHarness(v as typeof harness)}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Choose a harness" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude-code">Claude</SelectItem>
+                  <SelectItem value="codex">Codex</SelectItem>
+                  <SelectItem value="glm">GLM</SelectItem>
+                  <SelectItem value="kimi">Kimi</SelectItem>
+                  <SelectItem value="custom">Custom (OpenAI-compatible)</SelectItem>
+                  <SelectItem value="oz">Oz (remote)</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field>
               <FieldLabel htmlFor="agent-env">Environment ID</FieldLabel>

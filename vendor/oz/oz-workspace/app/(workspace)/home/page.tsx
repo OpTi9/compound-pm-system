@@ -8,9 +8,9 @@ import { CreateRoomDialog } from "@/components/create-room-dialog"
 const steps = [
   {
     icon: KeyIcon,
-    title: "Enter your Warp API Key",
+    title: "Configure Provider Credentials",
     description:
-      "Go to Settings and paste your Warp API key. This is required to run agents.",
+      "For the local runner, set OZ_PROVIDER_* env vars. For the remote runner, store your Oz API key in Settings or set OZ_API_KEY.",
     link: { href: "/settings", label: "Open Settings" },
   },
   {

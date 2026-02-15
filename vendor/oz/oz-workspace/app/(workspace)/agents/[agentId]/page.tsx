@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { IconPicker } from "@/components/icon-picker"
 import { useAgentStore } from "@/lib/stores"
@@ -132,6 +133,23 @@ export default function AgentDetailPage({
             <Field>
               <FieldLabel>Icon</FieldLabel>
               <IconPicker value={agent.icon} onChange={(icon) => update({ icon })} />
+            </Field>
+            <Field>
+              <FieldLabel>Harness</FieldLabel>
+              <Select value={agent.harness} onValueChange={(v) => update({ harness: v as Agent["harness"] })}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Choose a harness" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="claude-code">Claude</SelectItem>
+                  <SelectItem value="codex">Codex</SelectItem>
+                  <SelectItem value="glm">GLM</SelectItem>
+                  <SelectItem value="kimi">Kimi</SelectItem>
+                  <SelectItem value="gemini-cli">Gemini</SelectItem>
+                  <SelectItem value="custom">Custom (OpenAI-compatible)</SelectItem>
+                  <SelectItem value="oz">Oz (remote)</SelectItem>
+                </SelectContent>
+              </Select>
             </Field>
             <Field>
               <FieldLabel htmlFor="detail-env">Environment ID</FieldLabel>

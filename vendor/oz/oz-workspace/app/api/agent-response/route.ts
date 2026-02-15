@@ -247,7 +247,7 @@ export async function POST(request: Request) {
         })
         const teammates = roomAgents
           .map((ra) => ra.agent)
-          .filter((a) => a.id !== agentId && a.harness === "oz")
+          .filter((a) => a.id !== agentId && ["oz", "codex", "claude-code", "gemini-cli", "glm", "kimi", "custom"].includes(a.harness))
 
         const mentionedNames = extractMentionedNames(messageText, teammates.map((t) => t.name))
         if (mentionedNames.length > 0) {

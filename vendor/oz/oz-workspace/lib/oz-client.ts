@@ -1,9 +1,17 @@
 import OzAPI from "oz-agent-sdk"
 import type { ArtifactItem, RunItem } from "oz-agent-sdk/resources/agent/runs"
 import { prisma } from "@/lib/prisma"
+import { runLocalAgent } from "@/lib/runner/local"
 
 // Re-export SDK types so consumers don't need to import from the SDK directly.
 export type { ArtifactItem }
+
+export type RunnerMode = "local" | "remote"
+
+function getRunnerMode(): RunnerMode {
+  const raw = (process.env.OZ_RUNNER_MODE || "local").toLowerCase()
+  return raw === "remote" ? "remote" : "local"
+}
 
 async function getApiKey(userId?: string | null): Promise<string> {
   let apiKey: string | undefined
@@ -40,6 +48,13 @@ interface RunAgentOptions {
   prompt: string
   environmentId?: string
   userId?: string | null
+  /**
+   * Stable id for this invocation. In the Warp/Oz workflow, this is the value that is used as
+   * `task_id` when the agent posts back to `/api/agent-response`.
+   */
+  taskId?: string
+  roomId?: string
+  agentId?: string
 }
 
 export interface TaskStatus {
@@ -83,37 +98,50 @@ function mapRunItemToTaskStatus(data: RunItem): TaskStatus {
 }
 
 export async function runAgent(options: RunAgentOptions): Promise<string> {
-  const apiKey = await getApiKey(options.userId)
-  console.log("[oz-client] API key present:", !!apiKey, "length:", apiKey?.length)
+  const mode = getRunnerMode()
 
+  // Local mode: run in-process and persist the response immediately.
+  if (mode === "local") {
+    if (!options.taskId || !options.roomId || !options.agentId) {
+      throw new Error("Local runner requires taskId, roomId, and agentId")
+    }
+    await runLocalAgent({
+      taskId: options.taskId,
+      roomId: options.roomId,
+      agentId: options.agentId,
+      userId: options.userId ?? null,
+      prompt: options.prompt,
+    })
+    return options.taskId
+  }
+
+  // Remote mode: dispatch to the Oz Agent API.
+  const apiKey = await getApiKey(options.userId)
   const client = getOzClient(apiKey)
 
   const config: OzAPI.AmbientAgentConfig = {}
   if (options.environmentId) config.environment_id = options.environmentId
-
-  console.log("[oz-client] Request:", { prompt: options.prompt?.substring(0, 100) + "...", config })
 
   const response = await client.agent.run({
     prompt: options.prompt,
     ...(Object.keys(config).length > 0 ? { config } : {}),
   })
 
-  console.log("[oz-client] runAgent response:", response)
-  // The API may return run_id or the deprecated task_id depending on version.
   return response.run_id || response.task_id
 }
 
 export async function getTaskStatus(taskId: string, userId?: string | null): Promise<TaskStatus> {
+  const mode = getRunnerMode()
+
+  if (mode === "local") {
+    // Local runner is synchronous from the perspective of callers; by the time a taskId exists,
+    // the message has been persisted.
+    return { taskId, state: "completed" }
+  }
+
   const apiKey = await getApiKey(userId)
   const client = getOzClient(apiKey)
-
-  return retrieveTaskStatus(client, taskId)
-}
-
-async function retrieveTaskStatus(client: OzAPI, taskId: string): Promise<TaskStatus> {
   const data = await client.agent.runs.retrieve(taskId)
-  console.log("[oz-client] getTaskStatus response:", JSON.stringify(data, null, 2))
-
   return mapRunItemToTaskStatus(data)
 }
 
@@ -121,6 +149,9 @@ export async function pollForCompletion(
   taskId: string,
   options: { maxAttempts?: number; intervalMs?: number; userId?: string | null } = {}
 ): Promise<TaskStatus> {
+  const mode = getRunnerMode()
+  if (mode === "local") return { taskId, state: "completed" }
+
   const { maxAttempts = 60, intervalMs = 10000, userId } = options
 
   // Resolve API key and client once for the entire polling loop.
@@ -128,8 +159,8 @@ export async function pollForCompletion(
   const client = getOzClient(apiKey)
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const status = await retrieveTaskStatus(client, taskId)
-    console.log(`[oz-client] Poll attempt ${attempt + 1}: state=${status.state}`)
+    const data = await client.agent.runs.retrieve(taskId)
+    const status = mapRunItemToTaskStatus(data)
 
     if (status.state === "completed" || status.state === "failed") {
       return status
@@ -142,3 +173,4 @@ export async function pollForCompletion(
 
   throw new Error(`Task ${taskId} did not complete within timeout`)
 }
+

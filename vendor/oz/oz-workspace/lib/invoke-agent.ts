@@ -83,8 +83,10 @@ export async function invokeAgent({
   }
   console.log("[invokeAgent] Found agent:", { name: agent.name, harness: agent.harness })
 
-  if (agent.harness !== "oz") {
-    return { success: false, error: `Harness "${agent.harness}" is not yet supported`, errorStatus: 400 }
+  const runnerMode = (process.env.OZ_RUNNER_MODE || "local").toLowerCase()
+  const isRemoteRunner = runnerMode === "remote"
+  if (isRemoteRunner && agent.harness !== "oz") {
+    return { success: false, error: `Remote runner requires harness "oz" (got "${agent.harness}")`, errorStatus: 400 }
   }
 
   // Set agent to "running". For the initial call from /api/messages this is
@@ -112,9 +114,13 @@ export async function invokeAgent({
       where: { roomId },
       include: { agent: true },
     })
+
+    const runnableHarnesses = new Set(
+      isRemoteRunner ? ["oz"] : ["oz", "codex", "claude-code", "gemini-cli", "glm", "kimi", "custom"]
+    )
     const teammates = roomAgents
       .map((ra) => ra.agent)
-      .filter((a) => a.id !== agentId && a.harness === "oz")
+      .filter((a) => a.id !== agentId && runnableHarnesses.has(a.harness))
 
     const recentMessages = await prisma.message.findMany({
       where: { roomId },
@@ -147,7 +153,7 @@ export async function invokeAgent({
             .join("\n")
         : "No tasks yet."
 
-    const callbackInstructions = `
+    const callbackInstructions = isRemoteRunner ? `
 IMPORTANT: After completing the user's request, you MUST send your response back to the chat using the send_message skill.
 The chat UI supports Markdown (headings, lists, bold, etc.).
 If you want to trigger another agent, include their @mention in normal text (do NOT wrap it in backticks/code).
@@ -158,10 +164,12 @@ Call the send_message skill with:
 - message: Your response to the user
 
 This is REQUIRED - your response will not be seen by the user unless you use send_message.
+` : `
+Respond directly to the user in Markdown. If you want to request help from another agent, include their @mention in normal text (not in code).
 `
 
     const agentApiKey = process.env.AGENT_API_KEY || ""
-    const taskInstructions = `
+    const taskInstructions = isRemoteRunner ? `
 TASK TRACKING: You have access to the manage_tasks skill to track your work on the room's Kanban board.
 Use it to create tasks for work you plan to do, move them to in_progress when you start, and mark them done when finished.
 
@@ -172,9 +180,9 @@ Agent API Key: ${agentApiKey}
 
 Current room tasks:
 ${taskSummary}
-`
+` : ""
 
-    const notificationInstructions = `
+    const notificationInstructions = isRemoteRunner ? `
 NOTIFICATIONS: You have access to the send_notification skill to notify the human user via their Inbox.
 Use it to alert the user about:
 - Important status updates on long-running work
@@ -185,7 +193,7 @@ Use it to alert the user about:
 Your agent ID is: ${agentId}
 Room ID: ${roomId}
 Base URL for notification API: ${callbackBaseUrl}
-`
+` : ""
 
     const teammateInstructions =
       teammates.length > 0
@@ -209,24 +217,32 @@ To mention an agent, include @agent-name in your response message.
     console.log("[invokeAgent] Prompt length:", fullPrompt.length)
 
     const environmentId = agent.environmentId || process.env.OZ_ENVIRONMENT_ID || process.env.WARP_ENVIRONMENT_ID
-    if (!environmentId) {
-      throw new Error("No environment ID configured. Configure it on the agent.")
+    if (isRemoteRunner && !environmentId) {
+      throw new Error("No environment ID configured. Configure it on the agent or set OZ_ENVIRONMENT_ID.")
     }
-    console.log("[invokeAgent] Using environment:", environmentId)
 
-    const taskId = await runAgent({ prompt: fullPrompt, environmentId, userId })
+    const taskId = await runAgent({
+      prompt: fullPrompt,
+      environmentId: isRemoteRunner ? environmentId : undefined,
+      userId,
+      taskId: invocationId,
+      roomId,
+      agentId,
+    })
     console.log("[invokeAgent] Got taskId:", taskId)
-    // Persist a mapping so the callback handler can recover the run id
+    // Persist a mapping so the callback handler can recover the remote run id
     // and save artifacts even if this serverless function times out.
-    await prisma.agentCallback
-      .upsert({
-        where: { id: `oz-run:${invocationId}` },
-        create: { id: `oz-run:${invocationId}`, response: taskId },
-        update: { response: taskId },
-      })
-      .catch((err) => {
-        console.warn("[invokeAgent] Failed to persist oz-run mapping:", err)
-      })
+    if (isRemoteRunner && taskId !== invocationId) {
+      await prisma.agentCallback
+        .upsert({
+          where: { id: `oz-run:${invocationId}` },
+          create: { id: `oz-run:${invocationId}`, response: taskId },
+          update: { response: taskId },
+        })
+        .catch((err) => {
+          console.warn("[invokeAgent] Failed to persist oz-run mapping:", err)
+        })
+    }
 
     const result = await pollForCompletion(taskId, { userId })
 
