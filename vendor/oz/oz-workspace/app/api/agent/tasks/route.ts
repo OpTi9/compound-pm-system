@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { validateAgentApiKey } from "@/lib/agent-auth"
+import { normalizeTaskPriority, normalizeTaskStatus } from "@/lib/validation"
 
 const AGENT_SELECT = {
   id: true,
@@ -61,6 +62,15 @@ export async function POST(request: Request) {
       )
     }
 
+    const normalizedStatus = status === undefined ? "backlog" : normalizeTaskStatus(status)
+    if (!normalizedStatus) {
+      return NextResponse.json({ error: 'Invalid status (expected "backlog", "in_progress", or "done")' }, { status: 400 })
+    }
+    const normalizedPriority = priority === undefined ? "medium" : normalizeTaskPriority(priority)
+    if (!normalizedPriority) {
+      return NextResponse.json({ error: 'Invalid priority (expected "low", "medium", or "high")' }, { status: 400 })
+    }
+
     const room = await prisma.room.findUnique({ where: { id: roomId } })
     if (!room) {
       return NextResponse.json({ error: "Room not found" }, { status: 404 })
@@ -70,8 +80,8 @@ export async function POST(request: Request) {
       data: {
         title,
         description: description ?? "",
-        status: status ?? "backlog",
-        priority: priority ?? "medium",
+        status: normalizedStatus,
+        priority: normalizedPriority,
         userId: room.userId,
         roomId,
         assigneeId: assigneeId ?? null,

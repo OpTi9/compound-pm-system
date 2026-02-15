@@ -13,27 +13,88 @@ export async function GET(request: Request) {
     const userId = await getAuthenticatedUserId()
     const { searchParams } = new URL(request.url)
     const roomId = searchParams.get("roomId")
+    const all = (searchParams.get("all") || "").trim() === "1"
+    const before = (searchParams.get("before") || "").trim()
+    const limit = Math.min(Math.max(Number(searchParams.get("limit") || "2000"), 1), 2000)
     if (!roomId) return NextResponse.json({ error: "roomId required" }, { status: 400 })
 
     // Verify room belongs to user
     const room = await prisma.room.findUnique({ where: { id: roomId, userId } })
     if (!room) return NextResponse.json({ error: "Not found" }, { status: 404 })
 
-    const messages = await prisma.message.findMany({
-      where: { roomId },
+    // Best-effort stale agent sweeper (disabled by default). This mitigates agents stuck in
+    // "running" when a serverless invocation dies before it can reset state.
+    const staleMsRaw = (process.env.OZ_STALE_AGENT_SWEEP_MS || "").trim()
+    if (staleMsRaw) {
+      const staleMs = Number(staleMsRaw)
+      if (Number.isFinite(staleMs) && staleMs > 0) {
+        const cutoff = new Date(Date.now() - staleMs)
+        await prisma.agent.updateMany({
+          where: { status: "running", activeRoomId: roomId, updatedAt: { lt: cutoff } },
+          data: { status: "idle", activeRoomId: null },
+        }).catch(() => {})
+      }
+    }
+
+    if (all) {
+      const messages = await prisma.message.findMany({
+        where: { roomId },
+        include: {
+          agent: { select: { id: true, name: true, color: true, icon: true, status: true, activeRoomId: true } },
+        },
+        orderBy: { timestamp: "asc" },
+      })
+
+      return NextResponse.json(
+        messages.map((m) => ({
+          ...m,
+          author: m.authorType === "agent" ? m.agent : undefined,
+          agent: undefined,
+        }))
+      )
+    }
+
+    let cursor: { id: string; timestamp: Date } | null = null
+    if (before) {
+      const found = await prisma.message.findUnique({ where: { id: before }, select: { id: true, timestamp: true, roomId: true } })
+      if (!found || found.roomId !== roomId) {
+        return NextResponse.json({ error: "Invalid before cursor" }, { status: 400 })
+      }
+      cursor = { id: found.id, timestamp: found.timestamp }
+    }
+
+    const page = await prisma.message.findMany({
+      where: {
+        roomId,
+        ...(cursor
+          ? {
+              OR: [
+                { timestamp: { lt: cursor.timestamp } },
+                { AND: [{ timestamp: cursor.timestamp }, { id: { lt: cursor.id } }] },
+              ],
+            }
+          : {}),
+      },
       include: {
         agent: { select: { id: true, name: true, color: true, icon: true, status: true, activeRoomId: true } },
       },
-      orderBy: { timestamp: "asc" },
+      orderBy: [{ timestamp: "desc" }, { id: "desc" }],
+      take: limit + 1,
     })
 
-    return NextResponse.json(
-      messages.map((m) => ({
+    const hasMore = page.length > limit
+    const items = (hasMore ? page.slice(0, limit) : page).reverse()
+
+    const res = NextResponse.json(
+      items.map((m) => ({
         ...m,
         author: m.authorType === "agent" ? m.agent : undefined,
         agent: undefined,
       }))
     )
+    if (hasMore && items[0]?.id) res.headers.set("X-OZ-Next-Cursor", items[0].id)
+    if (hasMore) res.headers.set("X-OZ-Truncated", "1")
+    return res
   } catch (error) {
     if (error instanceof AuthError) return unauthorizedResponse()
     console.error("GET /api/messages error:", error)

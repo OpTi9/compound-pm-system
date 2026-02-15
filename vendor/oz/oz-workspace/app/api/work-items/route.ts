@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUserId, AuthError, unauthorizedResponse } from "@/lib/auth-helper"
 import { eventBroadcaster } from "@/lib/event-broadcaster"
+import { normalizeWorkItemStatus } from "@/lib/validation"
 
 export const maxDuration = 60
 
@@ -15,7 +16,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const roomId = (searchParams.get("roomId") || "").trim()
     const chainId = (searchParams.get("chainId") || "").trim()
-    const status = (searchParams.get("status") || "").trim().toUpperCase()
+    const status = normalizeWorkItemStatus(searchParams.get("status"))
     const type = (searchParams.get("type") || "").trim()
     const limit = Math.min(Math.max(Number(searchParams.get("limit") || "200"), 1), 500)
 

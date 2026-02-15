@@ -164,23 +164,49 @@ class RequestTooLargeError extends Error {
 
 function readJson(req: http.IncomingMessage, opts?: { maxBytes?: number }): Promise<any> {
   return new Promise((resolve, reject) => {
-    let body = ""
     const maxBytes = Math.max(1024, Number(opts?.maxBytes ?? 1_000_000)) // default 1MB
-    req.on("data", (chunk) => (body += chunk))
-    req.on("end", () => {
-      if (!body.trim()) return resolve(null)
-      try {
-        resolve(JSON.parse(body))
-      } catch (e) {
-        reject(e)
-      }
-    })
-    req.on("data", () => {
-      if (body.length > maxBytes) {
-        reject(new RequestTooLargeError("Request body too large"))
+    const chunks: Buffer[] = []
+    let bytes = 0
+    let done = false
+
+    const finish = (err: unknown, value?: any) => {
+      if (done) return
+      done = true
+      try { req.off("data", onData) } catch { /* ignore */ }
+      try { req.off("end", onEnd) } catch { /* ignore */ }
+      try { req.off("error", onError) } catch { /* ignore */ }
+      try { req.off("aborted", onAborted as any) } catch { /* ignore */ }
+      if (err) reject(err)
+      else resolve(value)
+    }
+
+    const onError = (e: unknown) => finish(e)
+    const onAborted = () => finish(new Error("Request aborted"))
+    const onData = (chunk: any) => {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      bytes += buf.length
+      if (bytes > maxBytes) {
+        finish(new RequestTooLargeError("Request body too large"))
         try { req.destroy() } catch { /* ignore */ }
+        return
       }
-    })
+      chunks.push(buf)
+    }
+    const onEnd = () => {
+      const body = Buffer.concat(chunks).toString("utf8")
+      if (!body.trim()) return finish(null, null)
+      try {
+        finish(null, JSON.parse(body))
+      } catch (e) {
+        finish(e)
+      }
+    }
+
+    req.on("error", onError)
+    // IncomingMessage emits "aborted" if the client aborts the request.
+    ;(req as any).on?.("aborted", onAborted)
+    req.on("data", onData)
+    req.on("end", onEnd)
   })
 }
 
@@ -224,6 +250,28 @@ async function main() {
 
     try {
       if (!url) return json(res, 400, { error: "Invalid URL", request_id: reqId })
+
+      // Optional CORS (disabled by default). Useful when calling the control plane from a browser.
+      // Configure `OZ_CORS_ORIGIN` as "*", a single origin, or a comma-separated allowlist.
+      const corsRaw = (process.env.OZ_CORS_ORIGIN || "").trim()
+      if (corsRaw) {
+        const origin = (req.headers["origin"] || "").toString().trim()
+        const allowAll = corsRaw === "*"
+        const allowList = allowAll ? [] : corsRaw.split(",").map((s) => s.trim()).filter(Boolean)
+        const allowed = allowAll || (origin && allowList.includes(origin))
+        if (allowed) {
+          res.setHeader("Access-Control-Allow-Origin", allowAll ? "*" : origin)
+          res.setHeader("Vary", "Origin")
+          res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+          res.setHeader("Access-Control-Allow-Headers", "Authorization,Content-Type,X-Request-Id,X-Oz-Request-Id")
+          res.setHeader("Access-Control-Max-Age", "600")
+        }
+        if (method === "OPTIONS") {
+          res.statusCode = 204
+          res.end()
+          return
+        }
+      }
 
       rlog.info("http.request", {
         method,

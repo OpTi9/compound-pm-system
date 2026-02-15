@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { validateAgentApiKey } from "@/lib/agent-auth"
+import { normalizeTaskPriority, normalizeTaskStatus } from "@/lib/validation"
 
 const AGENT_SELECT = {
   id: true,
@@ -31,8 +32,20 @@ export async function PATCH(
     const data: Record<string, unknown> = {}
     if (title !== undefined) data.title = title
     if (description !== undefined) data.description = description
-    if (status !== undefined) data.status = status
-    if (priority !== undefined) data.priority = priority
+    if (status !== undefined) {
+      const normalized = normalizeTaskStatus(status)
+      if (!normalized) {
+        return NextResponse.json({ error: 'Invalid status (expected "backlog", "in_progress", or "done")' }, { status: 400 })
+      }
+      data.status = normalized
+    }
+    if (priority !== undefined) {
+      const normalized = normalizeTaskPriority(priority)
+      if (!normalized) {
+        return NextResponse.json({ error: 'Invalid priority (expected "low", "medium", or "high")' }, { status: 400 })
+      }
+      data.priority = normalized
+    }
     if (assigneeId !== undefined) {
       data.assignee = assigneeId
         ? { connect: { id: assigneeId } }

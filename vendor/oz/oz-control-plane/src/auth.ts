@@ -13,11 +13,15 @@ export function requireAuth(req: { headers: Record<string, string | string[] | u
   if (!token) return { ok: false, status: 401, body: { error: "Unauthorized" } }
 
   const admin = (process.env.OZ_ADMIN_API_KEY || "").trim()
-  if (admin && token === admin) {
-    return { ok: true, isAdmin: true, ownerKeyHash: null, token }
+  if (admin) {
+    // Constant-time compare without leaking string length differences.
+    const tokenHash = crypto.createHash("sha256").update(token).digest()
+    const adminHash = crypto.createHash("sha256").update(admin).digest()
+    if (crypto.timingSafeEqual(tokenHash, adminHash)) {
+      return { ok: true, isAdmin: true, ownerKeyHash: null, token }
+    }
   }
 
   const ownerKeyHash = crypto.createHash("sha256").update(token).digest("hex")
   return { ok: true, isAdmin: false, ownerKeyHash, token }
 }
-

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUserId, AuthError, unauthorizedResponse } from "@/lib/auth-helper"
 import { eventBroadcaster } from "@/lib/event-broadcaster"
+import { normalizePrdStatus } from "@/lib/validation"
 
 export const maxDuration = 60
 
@@ -14,7 +15,7 @@ export async function GET(request: Request) {
     const userId = await getAuthenticatedUserId()
     const { searchParams } = new URL(request.url)
     const roomId = (searchParams.get("roomId") || "").trim()
-    const status = (searchParams.get("status") || "").trim().toUpperCase()
+    const status = normalizePrdStatus(searchParams.get("status"))
 
     if (roomId) {
       const room = await prisma.room.findUnique({ where: { id: roomId, userId }, select: { id: true } })

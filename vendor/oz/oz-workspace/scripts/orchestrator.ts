@@ -3,6 +3,18 @@ import crypto from "node:crypto"
 import { prisma } from "../lib/prisma"
 import { invokeAgent } from "../lib/invoke-agent"
 
+process.on("unhandledRejection", (reason) => {
+  // Keep the orchestrator alive; log loudly so a supervisor/ops can alert.
+  // eslint-disable-next-line no-console
+  console.error("[orchestrator] unhandledRejection", reason)
+})
+
+process.on("uncaughtException", (err) => {
+  // Keep the orchestrator alive; log loudly so a supervisor/ops can alert.
+  // eslint-disable-next-line no-console
+  console.error("[orchestrator] uncaughtException", err)
+})
+
 type WorkStatus = "QUEUED" | "CLAIMED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED"
 
 type WorkItemRow = Awaited<ReturnType<typeof prisma.workItem.findUnique>>

@@ -6,6 +6,7 @@ import { extractMentionedNames } from "@/lib/mentions"
 import { invokeAgent } from "@/lib/invoke-agent"
 import { getTaskStatus } from "@/lib/oz-client"
 import { saveArtifacts } from "@/lib/oz-artifacts"
+import { validateAgentApiKey } from "@/lib/agent-auth"
 import crypto from "node:crypto"
 const DEFAULT_ORCHESTRATION_TIMEOUT_MS = 15 * 60_000
 
@@ -31,6 +32,9 @@ function trimForPrompt(text: string, maxChars: number) {
 
 // POST - Agent sends its response here
 export async function POST(request: Request) {
+  const authError = validateAgentApiKey(request)
+  if (authError) return authError
+
   try {
     const body = await request.json()
     // Accept both camelCase and snake_case field names
