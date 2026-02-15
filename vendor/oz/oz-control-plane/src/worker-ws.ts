@@ -111,9 +111,11 @@ export function attachWorkerWebSocket(server: http.Server) {
         if (parsed.type === "task_claimed") {
           const taskId = parsed.data?.task_id
           if (!taskId) return
+          // Only advance tasks this worker actually owns. This prevents one worker from
+          // accidentally or maliciously "claiming" tasks assigned to a different worker.
           await prisma.agentRun.updateMany({
-            where: { id: taskId, state: { in: ["PENDING", "CLAIMED", "QUEUED"] } },
-            data: { state: "INPROGRESS", workerId, startedAt: new Date() },
+            where: { id: taskId, workerId, state: "CLAIMED" },
+            data: { state: "INPROGRESS", startedAt: new Date() },
           })
         } else if (parsed.type === "task_failed") {
           const taskId = parsed.data?.task_id
@@ -123,10 +125,9 @@ export function attachWorkerWebSocket(server: http.Server) {
           const sessionLink = typeof parsed.data?.session_link === "string" ? parsed.data.session_link : null
           if (!taskId) return
           await prisma.agentRun.updateMany({
-            where: { id: taskId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
+            where: { id: taskId, workerId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
             data: {
               state: "FAILED",
-              workerId,
               errorMessage: msg,
               output: output || "",
               artifactsJson: artifacts ? JSON.stringify(artifacts) : undefined,
@@ -143,10 +144,9 @@ export function attachWorkerWebSocket(server: http.Server) {
           if (!taskId) return
 
           await prisma.agentRun.updateMany({
-            where: { id: taskId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
+            where: { id: taskId, workerId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
             data: {
               state: exitCode === 0 ? "SUCCEEDED" : "FAILED",
-              workerId,
               output,
               errorMessage: exitCode === 0 ? null : `Worker exit code ${exitCode}`,
               artifactsJson: artifacts ? JSON.stringify(artifacts) : undefined,

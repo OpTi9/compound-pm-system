@@ -3,11 +3,11 @@ import { isRateLimitError, RateLimitError } from "./errors.js"
 import {
   earliestResetForCandidates,
   getProviderCandidatesForHarness,
-  handleProviderError,
   providerSaturated,
   queueEnabled,
   queueMaxWaitSeconds,
-  recordProviderCallStart,
+  recordProviderCallStartScoped,
+  handleProviderErrorScoped,
 } from "./router.js"
 import { runOpenAICompatibleChat, runOpenAICompatibleChatStream } from "./openai_compatible.js"
 import { runAnthropicMessages, runAnthropicMessagesStream } from "./providers/anthropic.js"
@@ -27,9 +27,13 @@ export async function runLocalAgent(opts: {
   prompt: string
   harness: string
 }): Promise<void> {
-  const existing = await prisma.agentRun.findUnique({ where: { id: opts.runId }, select: { state: true } })
+  const existing = await prisma.agentRun.findUnique({
+    where: { id: opts.runId },
+    select: { state: true, ownerKeyHash: true },
+  })
   if (!existing) throw new Error("Run not found")
   if (existing.state === "CANCELLED") return
+  const ownerKeyHash = existing.ownerKeyHash
 
   await prisma.agentRun.updateMany({
     where: { id: opts.runId, state: { in: ["QUEUED"] } },
@@ -64,7 +68,7 @@ export async function runLocalAgent(opts: {
     if (runState?.state === "CANCELLED") return
 
     for (const candidate of candidates) {
-      if (await providerSaturated(candidate)) continue
+      if (await providerSaturated(candidate, ownerKeyHash)) continue
 
       await prisma.agentRun.updateMany({
         where: { id: opts.runId, state: { notIn: ["CANCELLED"] } },
@@ -144,11 +148,11 @@ export async function runLocalAgent(opts: {
           }
         }
 
-        await recordProviderCallStart(candidate)
+        await recordProviderCallStartScoped(candidate, ownerKeyHash)
         break
       } catch (err) {
         lastErr = err
-        await handleProviderError(candidate, err)
+        await handleProviderErrorScoped(candidate, err, ownerKeyHash)
         if (isRateLimitError(err)) continue
         throw err
       }
@@ -165,7 +169,7 @@ export async function runLocalAgent(opts: {
       throw new RateLimitError(msg)
     }
 
-    const resetMs = await earliestResetForCandidates(candidates)
+    const resetMs = await earliestResetForCandidates(candidates, ownerKeyHash)
     const maxWaitMs = queueMaxWaitSeconds() * 1000
     const waitMs = Math.min((resetMs ?? 5000) + 250, maxWaitMs)
 

@@ -233,10 +233,15 @@ model AgentRun {
 
 // Simple rolling-window quota tracker for local provider routing.
 model ProviderUsage {
-  providerKey     String   @id
+  userId          String   @default("global")
+  providerKey     String
   windowStartedAt DateTime
   windowSeconds   Int
   messagesUsed    Int
   messagesLimit   Int
   updatedAt       DateTime @updatedAt
+
+  @@id([userId, providerKey])
+  @@index([userId])
+  @@index([providerKey])
 }

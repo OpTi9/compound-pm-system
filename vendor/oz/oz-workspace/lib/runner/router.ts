@@ -14,6 +14,11 @@ export interface ProviderCandidate {
   messagesLimit?: number
 }
 
+function scopeKey(userId: string | null | undefined): string {
+  const t = (userId || "").trim()
+  return t ? t : "global"
+}
+
 function env(key: string): string | undefined {
   const v = process.env[key]
   return v && v.trim() ? v.trim() : undefined
@@ -115,7 +120,7 @@ function parseFallbackOrder(harness: string, primaryProviderKey: string): string
 
 async function isProviderSaturated(providerKey: string, windowSeconds?: number, messagesLimit?: number): Promise<boolean> {
   if (!windowSeconds || !messagesLimit || messagesLimit <= 0 || windowSeconds <= 0) return false
-  const row = await prisma.providerUsage.findUnique({ where: { providerKey } })
+  const row = await prisma.providerUsage.findFirst({ where: { userId: "global", providerKey } })
   if (!row) return false
   const windowEnd = row.windowStartedAt.getTime() + row.windowSeconds * 1000
   const now = Date.now()
@@ -123,12 +128,35 @@ async function isProviderSaturated(providerKey: string, windowSeconds?: number, 
   return row.messagesUsed >= row.messagesLimit
 }
 
-async function bumpUsage(providerKey: string, windowSeconds: number, messagesLimit: number): Promise<void> {
+async function isProviderSaturatedScoped(
+  userId: string | null | undefined,
+  providerKey: string,
+  windowSeconds?: number,
+  messagesLimit?: number
+): Promise<boolean> {
+  if (!windowSeconds || !messagesLimit || messagesLimit <= 0 || windowSeconds <= 0) return false
+  const scope = scopeKey(userId)
+  const row = await prisma.providerUsage.findFirst({ where: { userId: scope, providerKey } })
+  if (!row) return false
+  const windowEnd = row.windowStartedAt.getTime() + row.windowSeconds * 1000
+  const now = Date.now()
+  if (now >= windowEnd) return false
+  return row.messagesUsed >= row.messagesLimit
+}
+
+async function bumpUsageScoped(
+  userId: string | null | undefined,
+  providerKey: string,
+  windowSeconds: number,
+  messagesLimit: number
+): Promise<void> {
+  const scope = scopeKey(userId)
   const now = new Date()
-  const row = await prisma.providerUsage.findUnique({ where: { providerKey } })
+  const row = await prisma.providerUsage.findFirst({ where: { userId: scope, providerKey } })
   if (!row) {
     await prisma.providerUsage.create({
       data: {
+        userId: scope,
         providerKey,
         windowStartedAt: now,
         windowSeconds,
@@ -141,8 +169,8 @@ async function bumpUsage(providerKey: string, windowSeconds: number, messagesLim
 
   const windowEnd = row.windowStartedAt.getTime() + row.windowSeconds * 1000
   if (Date.now() >= windowEnd || row.windowSeconds !== windowSeconds || row.messagesLimit !== messagesLimit) {
-    await prisma.providerUsage.update({
-      where: { providerKey },
+    await prisma.providerUsage.updateMany({
+      where: { userId: scope, providerKey },
       data: {
         windowStartedAt: now,
         windowSeconds,
@@ -153,8 +181,8 @@ async function bumpUsage(providerKey: string, windowSeconds: number, messagesLim
     return
   }
 
-  await prisma.providerUsage.update({
-    where: { providerKey },
+  await prisma.providerUsage.updateMany({
+    where: { userId: scope, providerKey },
     data: {
       messagesUsed: { increment: 1 },
       windowSeconds,
@@ -163,12 +191,19 @@ async function bumpUsage(providerKey: string, windowSeconds: number, messagesLim
   })
 }
 
-async function markSaturated(providerKey: string, windowSeconds?: number, messagesLimit?: number): Promise<void> {
-  const row = await prisma.providerUsage.findUnique({ where: { providerKey } })
+async function markSaturatedScoped(
+  userId: string | null | undefined,
+  providerKey: string,
+  windowSeconds?: number,
+  messagesLimit?: number
+): Promise<void> {
+  const scope = scopeKey(userId)
+  const row = await prisma.providerUsage.findFirst({ where: { userId: scope, providerKey } })
   if (!row) {
     if (!windowSeconds || !messagesLimit || windowSeconds <= 0 || messagesLimit <= 0) return
     await prisma.providerUsage.create({
       data: {
+        userId: scope,
         providerKey,
         windowStartedAt: new Date(),
         windowSeconds,
@@ -178,8 +213,8 @@ async function markSaturated(providerKey: string, windowSeconds?: number, messag
     })
     return
   }
-  await prisma.providerUsage.update({
-    where: { providerKey },
+  await prisma.providerUsage.updateMany({
+    where: { userId: scope, providerKey },
     data: { messagesUsed: row.messagesLimit },
   })
 }
@@ -189,7 +224,21 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function earliestResetMs(providerKeys: string[]): Promise<number | null> {
-  const rows = await prisma.providerUsage.findMany({ where: { providerKey: { in: providerKeys } } })
+  const rows = await prisma.providerUsage.findMany({ where: { userId: "global", providerKey: { in: providerKeys } } })
+  let best: number | null = null
+  const now = Date.now()
+  for (const r of rows) {
+    const end = r.windowStartedAt.getTime() + r.windowSeconds * 1000
+    if (end <= now) continue
+    const delta = end - now
+    if (best === null || delta < best) best = delta
+  }
+  return best
+}
+
+async function earliestResetMsScoped(userId: string | null | undefined, providerKeys: string[]): Promise<number | null> {
+  const scope = scopeKey(userId)
+  const rows = await prisma.providerUsage.findMany({ where: { userId: scope, providerKey: { in: providerKeys } } })
   let best: number | null = null
   const now = Date.now()
   for (const r of rows) {
@@ -220,12 +269,12 @@ export async function getProviderCandidatesForHarness(harness: string): Promise<
   return candidates
 }
 
-export async function selectProviderForHarness(harness: string): Promise<ProviderCandidate> {
+export async function selectProviderForHarness(harness: string, userId?: string | null): Promise<ProviderCandidate> {
   const candidates = await getProviderCandidatesForHarness(harness)
 
   // Prefer non-saturated candidates (quota-aware).
   for (const c of candidates) {
-    if (await isProviderSaturated(c.providerKey, c.windowSeconds, c.messagesLimit)) continue
+    if (await isProviderSaturatedScoped(userId, c.providerKey, c.windowSeconds, c.messagesLimit)) continue
     return c
   }
 
@@ -236,26 +285,29 @@ export async function selectProviderForHarness(harness: string): Promise<Provide
   }
 
   const maxWaitSeconds = envInt("OZ_QUEUE_MAX_WAIT_SECONDS") ?? 300
-  const resetMs = await earliestResetMs(candidates.map((c) => c.providerKey))
+  const resetMs = await earliestResetMsScoped(userId, candidates.map((c) => c.providerKey))
   if (resetMs === null) throw new RateLimitError(`All providers saturated for harness "${harness}"`, { status: 429 })
 
   const waitMs = Math.min(resetMs + 250, maxWaitSeconds * 1000)
   await sleep(waitMs)
 
   for (const c of candidates) {
-    if (await isProviderSaturated(c.providerKey, c.windowSeconds, c.messagesLimit)) continue
+    if (await isProviderSaturatedScoped(userId, c.providerKey, c.windowSeconds, c.messagesLimit)) continue
     return c
   }
 
   throw new RateLimitError(`All providers still saturated for harness "${harness}" after waiting`, { status: 429 })
 }
 
-export async function providerSaturated(candidate: ProviderCandidate): Promise<boolean> {
-  return isProviderSaturated(candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
+export async function providerSaturated(candidate: ProviderCandidate, userId: string | null | undefined): Promise<boolean> {
+  return isProviderSaturatedScoped(userId, candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
 }
 
-export async function earliestResetForCandidates(candidates: ProviderCandidate[]): Promise<number | null> {
-  return earliestResetMs(candidates.map((c) => c.providerKey))
+export async function earliestResetForCandidates(
+  candidates: ProviderCandidate[],
+  userId: string | null | undefined
+): Promise<number | null> {
+  return earliestResetMsScoped(userId, candidates.map((c) => c.providerKey))
 }
 
 export function queueEnabled(): boolean {
@@ -266,17 +318,17 @@ export function queueMaxWaitSeconds(): number {
   return envInt("OZ_QUEUE_MAX_WAIT_SECONDS") ?? 300
 }
 
-export async function recordProviderCallStart(candidate: ProviderCandidate): Promise<void> {
+export async function recordProviderCallStart(candidate: ProviderCandidate, userId: string | null | undefined): Promise<void> {
   if (!candidate.windowSeconds || !candidate.messagesLimit) return
-  await bumpUsage(candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
+  await bumpUsageScoped(userId, candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
 }
 
-export async function handleProviderError(candidate: ProviderCandidate, err: unknown): Promise<void> {
+export async function handleProviderError(candidate: ProviderCandidate, err: unknown, userId: string | null | undefined): Promise<void> {
   if (isRateLimitError(err)) {
-    await markSaturated(candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
+    await markSaturatedScoped(userId, candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
     return
   }
   if (err instanceof ProviderError && err.status === 429) {
-    await markSaturated(candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
+    await markSaturatedScoped(userId, candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
   }
 }

@@ -25,17 +25,22 @@ export async function requireOzApiAuth(
 
   // Multi-tenant scoping: allow per-user tokens stored in Settings.
   // Note: the UI already lets users store oz_api_key; we reuse it here to scope API routes.
-  const setting = await prisma.setting.findFirst({
+  const matches = await prisma.setting.findMany({
     where: {
       value: token,
       key: { in: ["oz_api_key"] },
       userId: { not: null },
     },
     select: { userId: true },
+    take: 2,
   })
 
-  if (setting?.userId) {
-    return { ok: true, ctx: { userId: setting.userId, isAdmin: false } }
+  if (matches.length === 1 && matches[0]?.userId) {
+    return { ok: true, ctx: { userId: matches[0].userId, isAdmin: false } }
+  }
+  // If multiple users store the same token, don't guess (prevents cross-tenant leakage).
+  if (matches.length > 1) {
+    return { ok: false, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) }
   }
 
   return { ok: false, response: NextResponse.json({ error: "Unauthorized" }, { status: 401 }) }

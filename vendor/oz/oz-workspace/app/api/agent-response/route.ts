@@ -6,6 +6,7 @@ import { extractMentionedNames } from "@/lib/mentions"
 import { invokeAgent } from "@/lib/invoke-agent"
 import { getTaskStatus } from "@/lib/oz-client"
 import { saveArtifacts } from "@/lib/oz-artifacts"
+import crypto from "node:crypto"
 const DEFAULT_ORCHESTRATION_TIMEOUT_MS = 15 * 60_000
 
 // This route can fan out follow-up invocations and persist artifacts after the response is sent.
@@ -17,7 +18,7 @@ function getOrchestrationTimeoutMs() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ORCHESTRATION_TIMEOUT_MS
 }
 function generateInvocationId() {
-  return `inv_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+  return `inv_${crypto.randomUUID()}`
 }
 function sanitizeDelegateText(text: string) {
   // Avoid accidental re-dispatch if the lead copies delegate responses containing @mentions.

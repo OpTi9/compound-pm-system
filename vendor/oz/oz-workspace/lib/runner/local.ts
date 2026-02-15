@@ -113,7 +113,7 @@ export async function runLocalAgent(opts: {
     if (runState?.state === "CANCELLED") return
 
     for (const candidate of candidates) {
-      if (await providerSaturated(candidate)) continue
+      if (await providerSaturated(candidate, opts.userId)) continue
 
       await prisma.agentRun.updateMany({
         where: { id: opts.taskId, state: { notIn: ["CANCELLED"] } },
@@ -195,11 +195,11 @@ export async function runLocalAgent(opts: {
         }
 
         // Only count usage against quotas once the provider call succeeds.
-        await recordProviderCallStart(candidate)
+        await recordProviderCallStart(candidate, opts.userId)
         break
       } catch (err) {
         lastErr = err
-        await handleProviderError(candidate, err)
+        await handleProviderError(candidate, err, opts.userId)
 
         // On rate limit, try the next provider; otherwise fail fast.
         if (isRateLimitError(err)) continue
@@ -220,7 +220,7 @@ export async function runLocalAgent(opts: {
     }
 
     // Queue until earliest reset (bounded).
-    const resetMs = await earliestResetForCandidates(candidates)
+    const resetMs = await earliestResetForCandidates(candidates, opts.userId)
     const maxWaitMs = queueMaxWaitSeconds() * 1000
     const waitMs = Math.min((resetMs ?? 5000) + 250, maxWaitMs)
 

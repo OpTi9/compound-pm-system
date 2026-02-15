@@ -40,11 +40,16 @@ model AgentRun {
 }
 
 model ProviderUsage {
-  providerKey     String   @id
+  ownerKeyHash    String
+  providerKey     String
   windowStartedAt DateTime
   windowSeconds   Int
   messagesUsed    Int
   messagesLimit   Int
+
+  @@id([ownerKeyHash, providerKey])
+  @@index([ownerKeyHash])
+  @@index([providerKey])
 }
 
 model Environment {

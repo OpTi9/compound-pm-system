@@ -4,10 +4,11 @@ import { eventBroadcaster } from "@/lib/event-broadcaster"
 import { extractMentionedNames } from "@/lib/mentions"
 import { saveArtifacts } from "@/lib/oz-artifacts"
 import { after } from "next/server"
+import crypto from "node:crypto"
 
 const MAX_DISPATCH_DEPTH = 20
 function generateInvocationId() {
-  return `inv_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+  return `inv_${crypto.randomUUID()}`
 }
 
 export interface InvokeAgentParams {
@@ -101,7 +102,7 @@ export async function invokeAgent({
   try {
     const invocationId =
       invocationIdOverride ||
-      `inv_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`
+      generateInvocationId()
     const callbackBaseUrl =
       process.env.AGENT_CALLBACK_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
     const callbackUrl = `${callbackBaseUrl}/api/agent-response?roomId=${encodeURIComponent(roomId)}&agentId=${encodeURIComponent(agentId)}`
