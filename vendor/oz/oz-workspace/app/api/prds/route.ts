@@ -9,6 +9,49 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
+export async function GET(request: Request) {
+  try {
+    const userId = await getAuthenticatedUserId()
+    const { searchParams } = new URL(request.url)
+    const roomId = (searchParams.get("roomId") || "").trim()
+    const status = (searchParams.get("status") || "").trim().toUpperCase()
+
+    if (roomId) {
+      const room = await prisma.room.findUnique({ where: { id: roomId, userId }, select: { id: true } })
+      if (!room) return NextResponse.json({ error: "Not found" }, { status: 404 })
+    }
+
+    const where: any = roomId
+      ? { roomId }
+      : { room: { userId } }
+    if (status) where.status = status
+
+    const items = await prisma.prd.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      take: 200,
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        roomId: true,
+        createdBy: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    })
+
+    return NextResponse.json({ items })
+  } catch (error) {
+    if (error instanceof AuthError) return unauthorizedResponse()
+    console.error("GET /api/prds error:", error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 }
+    )
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const userId = await getAuthenticatedUserId()
@@ -49,4 +92,3 @@ export async function POST(request: Request) {
     )
   }
 }
-
