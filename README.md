@@ -25,6 +25,7 @@ See `SECURITY.md` for operational security notes (secrets at rest, privileged wo
 ## Docs
 
 - Oz stack: `docs/OZ_STACK.md`
+- Quick start: `QUICK_START.md`
 - Repo architecture (current): `docs/ARCHITECTURE.md`
 - Rate limits (spec + implementation mapping): `docs/RATE-LIMIT-SYSTEM.md`
 - Compound PM workflow specs (design-stage): `DESIGN.md`, `docs/AGENTS.md`, `docs/AGENT-DRIVEN-RELEASES.md`, `docs/KIMI-SELF-EVOLUTION.md`
