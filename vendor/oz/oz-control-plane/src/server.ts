@@ -220,6 +220,7 @@ async function main() {
   await validateProvidersOnStartup()
   const port = Number(process.env.OZ_CONTROL_PLANE_PORT || "8080")
   if (!Number.isFinite(port) || port <= 0) throw new Error("OZ_CONTROL_PLANE_PORT must be a positive number")
+  const host = (process.env.OZ_CONTROL_PLANE_HOST || "").trim()
 
   const server = http.createServer(async (req, res) => {
     const reqIdHeader = (req.headers["x-request-id"] || req.headers["x-oz-request-id"]) as any
@@ -613,9 +614,15 @@ async function main() {
     }
   })
 
-  server.listen(port, () => {
-    log.info("startup.listening", { port })
-  })
+  if (host) {
+    server.listen(port, host, () => {
+      log.info("startup.listening", { port, host })
+    })
+  } else {
+    server.listen(port, () => {
+      log.info("startup.listening", { port })
+    })
+  }
 
   const workerWs: WorkerWsAttachment = attachWorkerWebSocket(server)
   const retention = startRetentionLoop()
