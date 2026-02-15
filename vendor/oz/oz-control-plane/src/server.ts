@@ -6,7 +6,97 @@ import { prisma } from "./prisma.js"
 import { requireAuth } from "./auth.js"
 import { harnessFromModelId, json } from "./oz-api-shapes.js"
 import { runLocalAgent } from "./runner/local.js"
-import { attachWorkerWebSocket, sendCancelToWorker } from "./worker-ws.js"
+import { attachWorkerWebSocket, sendCancelToWorker, type WorkerWsAttachment } from "./worker-ws.js"
+import { getProviderCandidatesForHarness } from "./runner/router.js"
+
+function envFlag(key: string, fallback = false): boolean {
+  const raw = (process.env[key] ?? "").trim().toLowerCase()
+  if (!raw) return fallback
+  return raw === "1" || raw === "true" || raw === "yes" || raw === "on"
+}
+
+function envInt(key: string, fallback: number): number {
+  const raw = (process.env[key] ?? "").trim()
+  if (!raw) return fallback
+  const n = Number(raw)
+  return Number.isFinite(n) ? n : fallback
+}
+
+function validateStartupConfig() {
+  const db = (process.env.DATABASE_URL || "").trim()
+  if (!db) throw new Error("DATABASE_URL is required")
+
+  const admin = (process.env.OZ_ADMIN_API_KEY || "").trim()
+  if (!admin && !envFlag("OZ_ALLOW_NO_ADMIN_KEY", false)) {
+    throw new Error("OZ_ADMIN_API_KEY is required (set OZ_ALLOW_NO_ADMIN_KEY=1 to override for dev)")
+  }
+
+  if (envFlag("OZ_REQUIRE_WORKER_SIDECAR", false)) {
+    const sidecar = (process.env.OZ_WORKER_SIDECAR_IMAGE || "").trim()
+    if (!sidecar) throw new Error("OZ_WORKER_SIDECAR_IMAGE is required when OZ_REQUIRE_WORKER_SIDECAR=1")
+  }
+}
+
+async function checkDb(): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    // Minimal liveness check.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _ = await prisma.$queryRaw`SELECT 1`
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : "DB error" }
+  }
+}
+
+async function validateProvidersOnStartup() {
+  if (!envFlag("OZ_STARTUP_VALIDATE_PROVIDERS", false)) return
+
+  const raw = (process.env.OZ_VALIDATE_HARNESSES || "").trim()
+  const harnesses = raw
+    ? raw.split(",").map((s) => s.trim()).filter(Boolean)
+    : [((process.env.OZ_OZAPI_DEFAULT_HARNESS || "custom").trim() || "custom"), "custom"]
+
+  for (const h of harnesses) {
+    try {
+      const candidates = await getProviderCandidatesForHarness(h)
+      console.log(`[oz-control-plane] provider validation ok: harness=${h} candidates=${candidates.map((c) => c.providerKey).join(",")}`)
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      throw new Error(`Provider validation failed for harness "${h}": ${msg}`)
+    }
+  }
+}
+
+function retentionCutoff(days: number): Date {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000)
+}
+
+function startRetentionLoop(): { stop: () => void } {
+  const days = envInt("OZ_RUN_RETENTION_DAYS", 30)
+  if (days <= 0) return { stop: () => {} }
+
+  const intervalMs = Math.max(60_000, envInt("OZ_RETENTION_SWEEP_INTERVAL_MS", 60 * 60_000))
+  const timer = setInterval(async () => {
+    try {
+      const cutoff = retentionCutoff(days)
+      // Only delete completed terminal runs.
+      await prisma.agentRun.deleteMany({
+        where: {
+          completedAt: { not: null, lt: cutoff },
+          state: { in: ["SUCCEEDED", "FAILED", "CANCELLED"] },
+        },
+      })
+    } catch (e) {
+      console.error("[oz-control-plane] retention sweep failed:", e)
+    }
+  }, intervalMs)
+
+  // Don't keep the process alive solely for retention.
+  ;(timer as any).unref?.()
+
+  console.log(`[oz-control-plane] retention enabled: deleting terminal runs after ${days} days (interval ${intervalMs}ms)`)
+  return { stop: () => clearInterval(timer) }
+}
 
 function toLines(v: any): string[] {
   if (Array.isArray(v)) return v.filter((x) => typeof x === "string").map((s) => s.trim()).filter(Boolean)
@@ -96,7 +186,10 @@ function pathMatch(pathname: string, pattern: RegExp): RegExpExecArray | null {
 }
 
 async function main() {
+  validateStartupConfig()
+  await validateProvidersOnStartup()
   const port = Number(process.env.OZ_CONTROL_PLANE_PORT || "8080")
+  if (!Number.isFinite(port) || port <= 0) throw new Error("OZ_CONTROL_PLANE_PORT must be a positive number")
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -104,7 +197,11 @@ async function main() {
       const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
       const pathname = url.pathname
 
-      if (pathname === "/health") return json(res, 200, { ok: true })
+      if (pathname === "/health") {
+        const db = await checkDb()
+        if (!db.ok) return json(res, 503, { ok: false, db: "error", error: db.error })
+        return json(res, 200, { ok: true, db: "ok" })
+      }
 
       if (!pathname.startsWith("/api/v1/")) return json(res, 404, { error: "Not found" })
 
@@ -215,7 +312,8 @@ async function main() {
         })
       }
 
-      if (method === "POST" && pathname === "/api/v1/agent/run") {
+      // SDK compatibility: accept both singular and plural create endpoints.
+      if (method === "POST" && (pathname === "/api/v1/agent/run" || pathname === "/api/v1/agent/runs")) {
         let body: any = null
         try {
           body = await readJson(req)
@@ -294,10 +392,39 @@ async function main() {
       const runsRoute = pathMatch(pathname, /^\/api\/v1\/agent\/runs\/?$/)
       if (method === "GET" && runsRoute) {
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200)
-        const where = auth.isAdmin ? {} : { ownerKeyHash: auth.ownerKeyHash }
-        const runs = await prisma.agentRun.findMany({ where, orderBy: { queuedAt: "desc" }, take: limit })
+        const cursor = (url.searchParams.get("cursor") || "").trim()
+        const whereBase = auth.isAdmin ? {} : { ownerKeyHash: auth.ownerKeyHash }
+
+        let where: any = whereBase
+        if (cursor) {
+          const cursorRun = await prisma.agentRun.findUnique({ where: { id: cursor } })
+          if (cursorRun && (auth.isAdmin || cursorRun.ownerKeyHash === auth.ownerKeyHash)) {
+            where = {
+              AND: [
+                whereBase,
+                {
+                  OR: [
+                    { queuedAt: { lt: cursorRun.queuedAt } },
+                    { AND: [{ queuedAt: cursorRun.queuedAt }, { id: { lt: cursorRun.id } }] },
+                  ],
+                },
+              ],
+            }
+          }
+        }
+
+        const runs = await prisma.agentRun.findMany({
+          where,
+          orderBy: [{ queuedAt: "desc" }, { id: "desc" }],
+          take: limit + 1,
+        })
+
+        const hasMore = runs.length > limit
+        const page = hasMore ? runs.slice(0, limit) : runs
+        const nextCursor = hasMore ? page[page.length - 1]?.id ?? null : null
+
         return json(res, 200, {
-          items: runs.map((run) => ({
+          items: page.map((run) => ({
             created_at: run.queuedAt.toISOString(),
             updated_at: run.updatedAt.toISOString(),
             prompt: run.prompt,
@@ -320,7 +447,7 @@ async function main() {
                 ? { message: run.errorMessage }
                 : null,
           })),
-          next_cursor: null,
+          next_cursor: nextCursor,
         })
       }
 
@@ -390,7 +517,32 @@ async function main() {
     console.log(`[oz-control-plane] listening on http://localhost:${port}`)
   })
 
-  attachWorkerWebSocket(server)
+  const workerWs: WorkerWsAttachment = attachWorkerWebSocket(server)
+  const retention = startRetentionLoop()
+
+  let shuttingDown = false
+  const shutdown = async (signal: string) => {
+    if (shuttingDown) return
+    shuttingDown = true
+    console.log(`[oz-control-plane] shutting down (${signal})...`)
+
+    retention.stop()
+    await workerWs.close().catch(() => {})
+
+    await new Promise<void>((resolve) => {
+      try {
+        server.close(() => resolve())
+      } catch {
+        resolve()
+      }
+    })
+
+    try { await prisma.$disconnect() } catch { /* ignore */ }
+    process.exit(0)
+  }
+
+  process.on("SIGINT", () => { shutdown("SIGINT").catch(() => process.exit(1)) })
+  process.on("SIGTERM", () => { shutdown("SIGTERM").catch(() => process.exit(1)) })
 }
 
 main().catch((e) => {

@@ -228,6 +228,7 @@ model AgentRun {
   @@index([roomId])
   @@index([agentId])
   @@index([userId])
+  @@index([userId, state])
   @@index([state])
 }
 

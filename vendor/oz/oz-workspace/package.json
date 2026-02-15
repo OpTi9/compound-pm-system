@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "next dev",
+    "test": "node --test --import tsx",
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",

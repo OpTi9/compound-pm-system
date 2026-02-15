@@ -38,6 +38,20 @@ export async function GET(request: NextRequest) {
     const encoder = new TextEncoder()
     let aborted = false
     let syntheticSeq = 0
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+    let heartbeatInterval: ReturnType<typeof setInterval> | null = null
+    const cleanup = (controller?: ReadableStreamDefaultController) => {
+      aborted = true
+      if (pollTimer) {
+        clearInterval(pollTimer)
+        pollTimer = null
+      }
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval)
+        heartbeatInterval = null
+      }
+      if (controller) safeCloseController(controller)
+    }
 
     const stream = new ReadableStream({
       async start(controller) {
@@ -58,7 +72,7 @@ export async function GET(request: NextRequest) {
           enqueue(`event: heartbeat\ndata: ${JSON.stringify({ t: Date.now() })}\n\n`)
 
         request.signal.addEventListener("abort", () => {
-          aborted = true
+          cleanup()
         })
 
         if (eventBroadcaster.hasRedis) {
@@ -80,10 +94,9 @@ export async function GET(request: NextRequest) {
           let polling = false
           let lastHeartbeat = Date.now()
 
-          const pollTimer = setInterval(async () => {
+          pollTimer = setInterval(async () => {
             if (aborted) {
-              clearInterval(pollTimer)
-              safeCloseController(controller)
+              cleanup(controller)
               return
             }
             if (polling) return
@@ -107,30 +120,27 @@ export async function GET(request: NextRequest) {
           }, POLL_INTERVAL_MS)
 
           request.signal.addEventListener("abort", () => {
-            aborted = true
-            clearInterval(pollTimer)
-            safeCloseController(controller)
+            cleanup(controller)
           })
         } else {
           // ── In-memory mode (local dev) ──────────────────────────
           const unsubscribe = eventBroadcaster.subscribe(roomId, sendEvent)
 
-          const heartbeatInterval = setInterval(() => {
+          heartbeatInterval = setInterval(() => {
             if (!aborted) heartbeat()
           }, HEARTBEAT_INTERVAL_MS)
 
           heartbeat()
 
           request.signal.addEventListener("abort", () => {
-            aborted = true
-            clearInterval(heartbeatInterval)
+            cleanup()
             unsubscribe()
             safeCloseController(controller)
           })
         }
       },
       cancel() {
-        aborted = true
+        cleanup()
       },
     })
 

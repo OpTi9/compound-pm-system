@@ -1,4 +1,4 @@
-import { ProviderError, RateLimitError } from "@/lib/runner/errors"
+import { ProviderError, RateLimitError } from "./errors"
 
 type Role = "system" | "user" | "assistant"
 
@@ -26,30 +26,40 @@ async function readSse(
   const decoder = new TextDecoder()
   let buf = ""
 
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buf += decoder.decode(value, { stream: true })
-
-    // SSE events are separated by a blank line.
+  try {
     while (true) {
-      const sep = buf.indexOf("\n\n")
-      const sepCrLf = buf.indexOf("\r\n\r\n")
-      const idx = sepCrLf !== -1 && (sep === -1 || sepCrLf < sep) ? sepCrLf : sep
-      if (idx === -1) break
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
 
-      const raw = buf.slice(0, idx)
-      buf = buf.slice(idx + (idx === sepCrLf ? 4 : 2))
+      // SSE events are separated by a blank line.
+      while (true) {
+        const sep = buf.indexOf("\n\n")
+        const sepCrLf = buf.indexOf("\r\n\r\n")
+        const idx = sepCrLf !== -1 && (sep === -1 || sepCrLf < sep) ? sepCrLf : sep
+        if (idx === -1) break
 
-      let event: string | undefined
-      const dataLines: string[] = []
-      for (const line of raw.split(/\r?\n/)) {
-        if (line.startsWith("event:")) event = line.slice(6).trim()
-        if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart())
+        const raw = buf.slice(0, idx)
+        buf = buf.slice(idx + (idx === sepCrLf ? 4 : 2))
+
+        let event: string | undefined
+        const dataLines: string[] = []
+        for (const line of raw.split(/\r?\n/)) {
+          if (line.startsWith("event:")) event = line.slice(6).trim()
+          if (line.startsWith("data:")) dataLines.push(line.slice(5).trimStart())
+        }
+        const data = dataLines.join("\n")
+        if (!data) continue
+        try {
+          onEvent({ event, data })
+        } catch {
+          // If the consumer callback throws (e.g. stream closed), stop reading.
+          return
+        }
       }
-      const data = dataLines.join("\n")
-      if (data) onEvent({ event, data })
     }
+  } finally {
+    try { reader.releaseLock() } catch { /* ignore */ }
   }
 }
 
@@ -136,7 +146,7 @@ export async function runOpenAICompatibleChatStream(
     const delta = json?.choices?.[0]?.delta?.content
     if (typeof delta === "string" && delta) {
       out += delta
-      opts.onDelta(delta)
+      try { opts.onDelta(delta) } catch { /* ignore */ }
     }
   })
 

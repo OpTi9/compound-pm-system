@@ -35,6 +35,7 @@ model AgentRun {
   updatedAt    DateTime @updatedAt
 
   @@index([ownerKeyHash])
+  @@index([ownerKeyHash, state])
   @@index([state])
   @@index([queuedAt])
 }

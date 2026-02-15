@@ -106,3 +106,25 @@ In worker mode, the sidecar writes `/workspace/.oz/agent_output.txt`. The worker
   - GitHub PR URLs are returned as `PULL_REQUEST` artifacts in `artifacts`
 
 `GET /api/v1/agent/runs/:id` and `GET /api/v1/agent/runs` return `artifacts` and `session_link` fields.
+
+## SDK Compatibility Notes
+
+- Create run: both `POST /api/v1/agent/run` (singular) and `POST /api/v1/agent/runs` (plural) are supported.
+- Runs list pagination: `GET /api/v1/agent/runs?limit=N&cursor=<run_id>` returns `next_cursor` when more results exist.
+
+## Health Check
+
+- `GET /health` returns `200` only if the HTTP server is up and the database is reachable.
+
+## Operational Hardening
+
+Control plane supports:
+
+- Startup validation:
+  - `DATABASE_URL` required
+  - `OZ_ADMIN_API_KEY` required unless `OZ_ALLOW_NO_ADMIN_KEY=true`
+  - Optional provider validation with `OZ_STARTUP_VALIDATE_PROVIDERS=true` (and optional `OZ_VALIDATE_HARNESSES=...`)
+- Graceful shutdown on `SIGINT`/`SIGTERM` (closes worker WS, stops retention, drains HTTP server, disconnects Prisma).
+- Data retention for terminal runs:
+  - `OZ_RUN_RETENTION_DAYS` (default `30`, set `<=0` to disable)
+  - `OZ_RETENTION_SWEEP_INTERVAL_MS` (default `3600000`)

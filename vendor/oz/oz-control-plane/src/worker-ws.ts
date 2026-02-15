@@ -19,6 +19,10 @@ export function sendCancelToWorker(workerId: string, taskId: string): boolean {
   }
 }
 
+export type WorkerWsAttachment = {
+  close: () => Promise<void>
+}
+
 type WorkerMessage =
   | { type: "task_claimed"; data: { task_id: string; worker_id: string } }
   | { type: "task_failed"; data: { task_id: string; message: string; output?: string; artifacts?: any; session_link?: string } }
@@ -45,7 +49,7 @@ function linesFromText(text: string | null | undefined): string[] {
 export function attachWorkerWebSocket(server: http.Server) {
   const wss = new WebSocketServer({ noServer: true })
 
-  server.on("upgrade", (req, socket, head) => {
+  const upgradeHandler = (req: any, socket: any, head: any) => {
     const u = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
     if (u.pathname !== "/api/v1/selfhosted/worker/ws") return
 
@@ -65,7 +69,9 @@ export function attachWorkerWebSocket(server: http.Server) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req)
     })
-  })
+  }
+
+  server.on("upgrade", upgradeHandler)
 
   wss.on("connection", (ws, req) => {
     const u = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`)
@@ -255,4 +261,28 @@ export function attachWorkerWebSocket(server: http.Server) {
       clearInterval(staleClaimLoop)
     })
   })
+
+  return {
+    close: async () => {
+      try {
+        server.off("upgrade", upgradeHandler as any)
+      } catch {
+        // ignore
+      }
+
+      // Close any connected workers (best-effort) so their per-connection timers clear.
+      for (const ws of connectedWorkers.values()) {
+        try { ws.close(1001, "Server shutting down") } catch { /* ignore */ }
+      }
+      connectedWorkers.clear()
+
+      await new Promise<void>((resolve) => {
+        try {
+          wss.close(() => resolve())
+        } catch {
+          resolve()
+        }
+      })
+    },
+  } satisfies WorkerWsAttachment
 }
