@@ -6,7 +6,7 @@ import { prisma } from "./prisma.js"
 import { requireAuth } from "./auth.js"
 import { harnessFromModelId, json } from "./oz-api-shapes.js"
 import { runLocalAgent } from "./runner/local.js"
-import { attachWorkerWebSocket } from "./worker-ws.js"
+import { attachWorkerWebSocket, sendCancelToWorker } from "./worker-ws.js"
 
 function toLines(v: any): string[] {
   if (Array.isArray(v)) return v.filter((x) => typeof x === "string").map((s) => s.trim()).filter(Boolean)
@@ -124,6 +124,9 @@ async function main() {
         const reposText = toLines(body?.repos).join("\n")
         const setupCommandsText = toLines(body?.setup_commands).join("\n")
         const envVarsText = envVarsToLines(body?.env_vars).join("\n")
+        if (globalScope && envVarsText) {
+          return json(res, 400, { error: "Global environments cannot include env_vars (store secrets per-tenant)" })
+        }
 
         const created = await prisma.environment.create({
           data: {
@@ -212,6 +215,12 @@ async function main() {
             if (!auth.isAdmin && env.ownerKeyHash && env.ownerKeyHash !== auth.ownerKeyHash) {
               return json(res, 404, { error: "Not found" })
             }
+            // Non-admins are allowed to use global envs, but global envs are forced to have no env_vars.
+          }
+          if (!env) {
+            const allowRaw = (process.env.OZ_ALLOW_RAW_ENV_IMAGE || "").toLowerCase()
+            const ok = allowRaw === "1" || allowRaw === "true"
+            if (!ok) return json(res, 404, { error: "Not found" })
           }
         }
 
@@ -339,6 +348,11 @@ async function main() {
             errorMessage: run.errorMessage || "Cancelled",
           },
         })
+
+        if (run.workerId) {
+          // Best-effort cancel propagation to a connected worker.
+          sendCancelToWorker(run.workerId, runID)
+        }
         return json(res, 200, "cancelled")
       }
 

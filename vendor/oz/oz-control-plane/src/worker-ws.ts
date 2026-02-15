@@ -6,6 +6,19 @@ import crypto from "node:crypto"
 import { prisma } from "./prisma.js"
 import { requireAuth } from "./auth.js"
 
+const connectedWorkers = new Map<string, any>()
+
+export function sendCancelToWorker(workerId: string, taskId: string): boolean {
+  const ws = connectedWorkers.get(workerId)
+  if (!ws) return false
+  try {
+    ws.send(JSON.stringify({ type: "task_cancel", data: { task_id: taskId } }))
+    return true
+  } catch {
+    return false
+  }
+}
+
 type WorkerMessage =
   | { type: "task_claimed"; data: { task_id: string; worker_id: string } }
   | { type: "task_failed"; data: { task_id: string; message: string; output?: string; artifacts?: any; session_link?: string } }
@@ -60,6 +73,8 @@ export function attachWorkerWebSocket(server: http.Server) {
 
     console.log(`[${nowIso()}] [worker-ws] connected worker_id=${workerId}`)
 
+    connectedWorkers.set(workerId, ws)
+
     let closed = false
     const close = () => {
       if (closed) return
@@ -69,7 +84,22 @@ export function attachWorkerWebSocket(server: http.Server) {
 
     ws.on("close", () => {
       closed = true
+      connectedWorkers.delete(workerId)
       console.log(`[${nowIso()}] [worker-ws] disconnected worker_id=${workerId}`)
+
+      // Requeue tasks that were claimed but never started; fail in-progress tasks to avoid duplicates.
+      prisma.agentRun
+        .updateMany({
+          where: { workerId, state: "CLAIMED" },
+          data: { state: "PENDING", workerId: null, startedAt: null, providerKey: "pending", providerType: "pending" },
+        })
+        .catch(() => {})
+      prisma.agentRun
+        .updateMany({
+          where: { workerId, state: "INPROGRESS" },
+          data: { state: "FAILED", completedAt: new Date(), errorMessage: "Worker disconnected" },
+        })
+        .catch(() => {})
     })
 
     ws.on("message", async (buf) => {
@@ -210,8 +240,19 @@ export function attachWorkerWebSocket(server: http.Server) {
       }
     }, 1500)
 
+    const claimTimeoutMs = Math.max(10_000, Number(process.env.OZ_WORKER_CLAIM_TIMEOUT_MS || "120000"))
+    const staleClaimLoop = setInterval(async () => {
+      if (closed) return
+      const cutoff = new Date(Date.now() - claimTimeoutMs)
+      await prisma.agentRun.updateMany({
+        where: { state: "CLAIMED", startedAt: { lt: cutoff } },
+        data: { state: "PENDING", workerId: null, startedAt: null, providerKey: "pending", providerType: "pending" },
+      })
+    }, 5000)
+
     ws.on("close", () => {
       clearInterval(assignmentLoop)
+      clearInterval(staleClaimLoop)
     })
   })
 }

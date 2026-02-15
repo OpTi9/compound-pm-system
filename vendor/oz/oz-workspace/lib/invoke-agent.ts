@@ -152,47 +152,13 @@ export async function invokeAgent({
             .join("\n")
         : "No tasks yet."
 
-    const callbackInstructions = isRemoteRunner ? `
-IMPORTANT: After completing the user's request, you MUST send your response back to the chat using the send_message skill.
-The chat UI supports Markdown (headings, lists, bold, etc.).
-If you want to trigger another agent, include their @mention in normal text (do NOT wrap it in backticks/code).
-
-Call the send_message skill with:
-- callback_url: "${callbackUrl}"
-- task_id: "${invocationId}"
-- message: Your response to the user
-
-This is REQUIRED - your response will not be seen by the user unless you use send_message.
-` : `
+    // Remote runner modes (control plane / worker) currently do not provide a workspace callback/skill runtime.
+    // The agent output is retrieved via run polling and persisted below.
+    const callbackInstructions = `
 Respond directly to the user in Markdown. If you want to request help from another agent, include their @mention in normal text (not in code).
 `
-
-    const agentApiKey = process.env.AGENT_API_KEY || ""
-    const taskInstructions = isRemoteRunner ? `
-TASK TRACKING: You have access to the manage_tasks skill to track your work on the room's Kanban board.
-Use it to create tasks for work you plan to do, move them to in_progress when you start, and mark them done when finished.
-
-Your agent ID is: ${agentId}
-Room ID: ${roomId}
-Base URL for task API: ${callbackBaseUrl}
-Agent API Key: ${agentApiKey}
-
-Current room tasks:
-${taskSummary}
-` : ""
-
-    const notificationInstructions = isRemoteRunner ? `
-NOTIFICATIONS: You have access to the send_notification skill to notify the human user via their Inbox.
-Use it to alert the user about:
-- Important status updates on long-running work
-- Items that require human review (e.g. PRs, plans, documents)
-- Task completions
-- Errors or failures that need human attention
-
-Your agent ID is: ${agentId}
-Room ID: ${roomId}
-Base URL for notification API: ${callbackBaseUrl}
-` : ""
+    const taskInstructions = ""
+    const notificationInstructions = ""
 
     const teammateInstructions =
       teammates.length > 0
@@ -295,45 +261,26 @@ To mention an agent, include @agent-name in your response message.
       result.statusMessage || (result.title ? `✓ ${result.title}` : "Task completed")
     let hasCallbackResponse = false
 
-    // Prefer the message that is persisted by /api/agent-response (so we survive serverless timeouts).
-    console.log("[invokeAgent] Waiting for callback message persistence:", invocationId)
-    for (let i = 0; i < 15; i++) {
-      try {
-        const persisted = await prisma.message.findUnique({
-          where: { id: invocationId },
-          select: { content: true },
-        })
-        if (persisted) {
-          messageContent = persisted.content
+    // Best-effort: if some external callback path already persisted a response message, prefer it.
+    // Do not wait; remote runner results should be available via polling.
+    try {
+      const persisted = await prisma.message.findUnique({
+        where: { id: invocationId },
+        select: { content: true },
+      })
+      if (persisted?.content) {
+        messageContent = persisted.content
+        hasCallbackResponse = true
+      } else {
+        const callback = await prisma.agentCallback.findUnique({ where: { id: invocationId }, select: { response: true } })
+        if (callback?.response) {
+          messageContent = callback.response
           hasCallbackResponse = true
-          break
+          await prisma.agentCallback.delete({ where: { id: invocationId } }).catch(() => {})
         }
-      } catch (e) {
-        console.log("[invokeAgent] Persisted message poll error:", e)
       }
-      await new Promise((resolve) => setTimeout(resolve, 2000))
-    }
-
-    // Backward compat: if the callback wasn't persisted as a Message, fall back to AgentCallback polling.
-    if (!hasCallbackResponse) {
-      console.log("[invokeAgent] Polling for callback response with invocationId:", invocationId)
-      for (let i = 0; i < 15; i++) {
-        try {
-          const callback = await prisma.agentCallback.findUnique({
-            where: { id: invocationId },
-          })
-          if (callback) {
-            console.log("[invokeAgent] Got callback response:", callback.response.substring(0, 100))
-            messageContent = callback.response
-            hasCallbackResponse = true
-            await prisma.agentCallback.delete({ where: { id: invocationId } })
-            break
-          }
-        } catch (e) {
-          console.log("[invokeAgent] Callback poll error:", e)
-        }
-        await new Promise((resolve) => setTimeout(resolve, 2000))
-      }
+    } catch {
+      // ignore
     }
 
     const message = await prisma.message.upsert({

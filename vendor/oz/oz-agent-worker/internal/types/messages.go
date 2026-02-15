@@ -13,6 +13,7 @@ const (
 	MessageTypeTaskClaimed    MessageType = "task_claimed"
 	MessageTypeTaskFailed     MessageType = "task_failed"
 	MessageTypeTaskCompleted  MessageType = "task_completed"
+	MessageTypeTaskCancel     MessageType = "task_cancel"
 	MessageTypeHeartbeat      MessageType = "heartbeat"
 )
 
@@ -40,6 +41,11 @@ type TaskAssignmentMessage struct {
 	EnvVars map[string]string `json:"env_vars,omitempty"`
 	// AdditionalSidecars is a list of extra sidecar images to mount into the task container.
 	AdditionalSidecars []SidecarMount `json:"additional_sidecars,omitempty"`
+}
+
+// TaskCancelMessage is sent from server to worker to request cancellation.
+type TaskCancelMessage struct {
+	TaskID string `json:"task_id"`
 }
 
 // TaskClaimedMessage is sent from worker to server after successfully claiming a task

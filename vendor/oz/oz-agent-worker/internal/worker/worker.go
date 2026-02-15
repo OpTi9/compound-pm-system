@@ -64,6 +64,7 @@ type Worker struct {
 	lastHeartbeat  time.Time
 	sendChan       chan []byte
 	activeTasks    map[string]context.CancelFunc
+	activeContainers map[string]string
 	tasksMutex     sync.Mutex
 	dockerClient   *client.Client
 	platform       string // Docker daemon platform (e.g., "linux/amd64" or "linux/arm64")
@@ -120,6 +121,7 @@ func New(ctx context.Context, config Config) (*Worker, error) {
 		reconnectDelay: InitialReconnectDelay,
 		sendChan:       make(chan []byte, 256),
 		activeTasks:    make(map[string]context.CancelFunc),
+		activeContainers: make(map[string]string),
 		dockerClient:   dockerClient,
 		platform:       platform,
 	}, nil
@@ -325,8 +327,44 @@ func (w *Worker) handleMessage(message []byte) {
 		}
 		w.handleTaskAssignment(&assignment)
 
+	case types.MessageTypeTaskCancel:
+		var cancelMsg types.TaskCancelMessage
+		if err := json.Unmarshal(msg.Data, &cancelMsg); err != nil {
+			log.Errorf(w.ctx, "Failed to unmarshal task cancel: %v", err)
+			return
+		}
+		w.handleTaskCancel(cancelMsg.TaskID)
+
 	default:
 		log.Warnf(w.ctx, "Unknown message type: %s", msg.Type)
+	}
+}
+
+func (w *Worker) handleTaskCancel(taskID string) {
+	if strings.TrimSpace(taskID) == "" {
+		return
+	}
+	log.Warnf(w.ctx, "Received task cancel: taskID=%s", taskID)
+
+	var cancel context.CancelFunc
+	var containerID string
+
+	w.tasksMutex.Lock()
+	cancel = w.activeTasks[taskID]
+	containerID = w.activeContainers[taskID]
+	w.tasksMutex.Unlock()
+
+	if cancel != nil {
+		cancel()
+	}
+
+	// Best-effort stop/remove the container to avoid burning resources after cancellation.
+	if containerID != "" && w.dockerClient != nil {
+		stopCtx, stopCancel := context.WithTimeout(w.ctx, 20*time.Second)
+		defer stopCancel()
+
+		_ = w.dockerClient.ContainerStop(stopCtx, containerID, container.StopOptions{})
+		_ = w.dockerClient.ContainerRemove(stopCtx, containerID, container.RemoveOptions{Force: true})
 	}
 }
 
@@ -351,6 +389,7 @@ func (w *Worker) executeTask(ctx context.Context, assignment *types.TaskAssignme
 	defer func() {
 		w.tasksMutex.Lock()
 		delete(w.activeTasks, assignment.TaskID)
+		delete(w.activeContainers, assignment.TaskID)
 		w.tasksMutex.Unlock()
 	}()
 
@@ -564,6 +603,11 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 
 	containerID := resp.ID
 	log.Debugf(ctx, "Created Docker container: %s", containerID)
+
+	// Allow cancellation to stop/remove the container.
+	w.tasksMutex.Lock()
+	w.activeContainers[assignment.TaskID] = containerID
+	w.tasksMutex.Unlock()
 
 	defer func() {
 		if containerID != "" && !w.config.NoCleanup {
