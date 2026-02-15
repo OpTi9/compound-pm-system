@@ -1,54 +1,20 @@
 import { prisma } from "@/lib/prisma"
 import { runOpenAICompatibleChat } from "@/lib/runner/openai_compatible"
+import { runAnthropicMessages } from "@/lib/runner/providers/anthropic"
+import { runCliProvider } from "@/lib/runner/providers/cli"
+import { RateLimitError, isRateLimitError } from "@/lib/runner/errors"
+import {
+  earliestResetForCandidates,
+  getProviderCandidatesForHarness,
+  handleProviderError,
+  providerSaturated,
+  queueEnabled,
+  queueMaxWaitSeconds,
+  recordProviderCallStart,
+} from "@/lib/runner/router"
 
-function providerKeyFromHarness(harness: string): string {
-  switch (harness) {
-    case "codex":
-      return "codex"
-    case "claude-code":
-      return "claude"
-    case "gemini-cli":
-      return "gemini"
-    case "glm":
-      return "glm"
-    case "kimi":
-      return "kimi"
-    case "custom":
-      return "custom"
-    case "oz":
-    default:
-      return (process.env.OZ_DEFAULT_PROVIDER || "custom").toLowerCase()
-  }
-}
-
-function env(key: string): string | undefined {
-  const v = process.env[key]
-  if (!v) return undefined
-  return v
-}
-
-function providerEnvName(providerKey: string, suffix: string): string {
-  return `OZ_PROVIDER_${providerKey.toUpperCase()}_${suffix}`
-}
-
-function getProviderConfig(providerKey: string): { baseUrl: string; apiKey?: string; model: string } {
-  const baseUrl =
-    env(providerEnvName(providerKey, "BASE_URL")) ||
-    env("OZ_PROVIDER_BASE_URL") ||
-    env("OZ_API_BASE_URL") // convenience for single-provider setups
-  const apiKey =
-    env(providerEnvName(providerKey, "API_KEY")) ||
-    env("OZ_PROVIDER_API_KEY") ||
-    env("OZ_API_KEY")
-  const model =
-    env(providerEnvName(providerKey, "MODEL")) ||
-    env("OZ_PROVIDER_MODEL") ||
-    env("OZ_MODEL")
-
-  if (!baseUrl) throw new Error(`Missing provider base URL. Set ${providerEnvName(providerKey, "BASE_URL")} (or OZ_PROVIDER_BASE_URL).`)
-  if (!model) throw new Error(`Missing provider model. Set ${providerEnvName(providerKey, "MODEL")} (or OZ_PROVIDER_MODEL/OZ_MODEL).`)
-
-  return { baseUrl, apiKey, model }
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
 }
 
 export async function runLocalAgent(opts: {
@@ -64,24 +30,106 @@ export async function runLocalAgent(opts: {
   })
   if (!agent) throw new Error("Agent not found")
 
-  const providerKey = providerKeyFromHarness(agent.harness)
-  const cfg = getProviderConfig(providerKey)
-
-  const response = await runOpenAICompatibleChat({
-    baseUrl: cfg.baseUrl,
-    apiKey: cfg.apiKey,
-    model: cfg.model,
-    messages: [
-      {
-        role: "system",
-        content:
-          agent.systemPrompt?.trim() ||
-          `You are an AI agent named ${agent.name}. Respond helpfully and concisely. The chat UI supports Markdown.`,
-      },
-      { role: "user", content: opts.prompt },
-    ],
-    temperature: 0.2,
+  // Update run state -> INPROGRESS.
+  await prisma.agentRun.updateMany({
+    where: { id: opts.taskId, state: { in: ["QUEUED"] } },
+    data: { state: "INPROGRESS", startedAt: new Date() },
   })
+
+  const system =
+    agent.systemPrompt?.trim() ||
+    `You are an AI agent named ${agent.name}. Respond helpfully and concisely. The chat UI supports Markdown.`
+
+  const candidates = await getProviderCandidatesForHarness(agent.harness)
+  let response: string | null = null
+  let lastErr: unknown = null
+
+  // If we're completely saturated and queueing is enabled, mark QUEUED while waiting.
+  while (response === null) {
+    let attemptedAny = false
+    for (const candidate of candidates) {
+      if (await providerSaturated(candidate)) continue
+      attemptedAny = true
+
+      await prisma.agentRun.updateMany({
+        where: { id: opts.taskId },
+        data: {
+          providerKey: candidate.providerKey,
+          providerType: candidate.type,
+          model: candidate.model,
+          state: "INPROGRESS",
+          startedAt: new Date(),
+        },
+      })
+
+      try {
+        await recordProviderCallStart(candidate)
+
+        if (candidate.type === "anthropic") {
+          if (!candidate.apiKey) throw new Error("Missing API key for Anthropic provider (set OZ_PROVIDER_CLAUDE_API_KEY or OZ_PROVIDER_API_KEY)")
+          response = await runAnthropicMessages({
+            apiKey: candidate.apiKey,
+            model: candidate.model,
+            system,
+            messages: [{ role: "user", content: opts.prompt }],
+            temperature: 0.2,
+            maxTokens: 2048,
+            baseUrl: candidate.baseUrl,
+          })
+        } else if (candidate.type === "cli") {
+          response = await runCliProvider({
+            providerKey: candidate.providerKey,
+            prompt: `${system}\n\n${opts.prompt}`,
+            model: candidate.model,
+          })
+        } else {
+          if (!candidate.baseUrl) throw new Error(`Missing provider base URL for ${candidate.providerKey}`)
+          response = await runOpenAICompatibleChat({
+            baseUrl: candidate.baseUrl,
+            apiKey: candidate.apiKey,
+            model: candidate.model,
+            messages: [
+              { role: "system", content: system },
+              { role: "user", content: opts.prompt },
+            ],
+            temperature: 0.2,
+          })
+        }
+
+        break
+      } catch (err) {
+        lastErr = err
+        await handleProviderError(candidate, err)
+
+        // On rate limit, try the next provider; otherwise fail fast.
+        if (isRateLimitError(err)) continue
+        throw err
+      }
+    }
+
+    if (response !== null) break
+
+    // No candidates available (all saturated) or all attempts rate-limited.
+    if (!queueEnabled()) {
+      const msg = lastErr instanceof Error ? lastErr.message : "All providers saturated"
+      await prisma.agentRun.updateMany({
+        where: { id: opts.taskId },
+        data: { state: "FAILED", errorMessage: msg, completedAt: new Date() },
+      })
+      throw new RateLimitError(msg)
+    }
+
+    // Queue until earliest reset (bounded).
+    const resetMs = await earliestResetForCandidates(candidates)
+    const maxWaitMs = queueMaxWaitSeconds() * 1000
+    const waitMs = Math.min((resetMs ?? 5000) + 250, maxWaitMs)
+
+    await prisma.agentRun.updateMany({
+      where: { id: opts.taskId },
+      data: { state: "QUEUED" },
+    })
+    await sleep(waitMs)
+  }
 
   // Persist the agent response as if it came from the callback handler.
   await prisma.message.upsert({
@@ -99,5 +147,9 @@ export async function runLocalAgent(opts: {
       content: response,
     },
   })
-}
 
+  await prisma.agentRun.updateMany({
+    where: { id: opts.taskId },
+    data: { state: "SUCCEEDED", completedAt: new Date(), errorMessage: null },
+  })
+}

@@ -105,6 +105,32 @@ export async function runAgent(options: RunAgentOptions): Promise<string> {
     if (!options.taskId || !options.roomId || !options.agentId) {
       throw new Error("Local runner requires taskId, roomId, and agentId")
     }
+    const agent = await prisma.agent.findUnique({
+      where: { id: options.agentId },
+      select: { harness: true },
+    })
+    if (!agent) throw new Error("Agent not found")
+
+    await prisma.agentRun
+      .create({
+        data: {
+          id: options.taskId,
+          roomId: options.roomId,
+          agentId: options.agentId,
+          userId: options.userId ?? null,
+          harness: agent.harness,
+          providerKey: "pending",
+          providerType: "pending",
+          model: process.env.OZ_MODEL || process.env.OZ_PROVIDER_MODEL || "pending",
+          state: "QUEUED",
+        },
+      })
+      .catch(async (err) => {
+        // Idempotent: if the run already exists, don't fail.
+        const msg = err instanceof Error ? err.message : String(err)
+        if (!msg.toLowerCase().includes("unique")) throw err
+      })
+
     await runLocalAgent({
       taskId: options.taskId,
       roomId: options.roomId,
@@ -134,9 +160,19 @@ export async function getTaskStatus(taskId: string, userId?: string | null): Pro
   const mode = getRunnerMode()
 
   if (mode === "local") {
-    // Local runner is synchronous from the perspective of callers; by the time a taskId exists,
-    // the message has been persisted.
-    return { taskId, state: "completed" }
+    const run = await prisma.agentRun.findUnique({ where: { id: taskId } })
+    if (!run) return { taskId, state: "pending" }
+    const state =
+      run.state === "SUCCEEDED" ? "completed"
+      : run.state === "FAILED" || run.state === "CANCELLED" ? "failed"
+      : run.state === "INPROGRESS" ? "running"
+      : "pending"
+    return {
+      taskId,
+      state,
+      title: run.harness ? `${run.harness} run` : undefined,
+      statusMessage: run.errorMessage ?? undefined,
+    }
   }
 
   const apiKey = await getApiKey(userId)
@@ -150,7 +186,16 @@ export async function pollForCompletion(
   options: { maxAttempts?: number; intervalMs?: number; userId?: string | null } = {}
 ): Promise<TaskStatus> {
   const mode = getRunnerMode()
-  if (mode === "local") return { taskId, state: "completed" }
+  if (mode === "local") {
+    const { maxAttempts = 60, intervalMs = 1000 } = options
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const status = await getTaskStatus(taskId)
+      if (status.state === "completed" || status.state === "failed") return status
+      const jitter = intervalMs * (0.8 + Math.random() * 0.4)
+      await new Promise((resolve) => setTimeout(resolve, jitter))
+    }
+    throw new Error(`Task ${taskId} did not complete within timeout`)
+  }
 
   const { maxAttempts = 60, intervalMs = 10000, userId } = options
 
@@ -173,4 +218,3 @@ export async function pollForCompletion(
 
   throw new Error(`Task ${taskId} did not complete within timeout`)
 }
-

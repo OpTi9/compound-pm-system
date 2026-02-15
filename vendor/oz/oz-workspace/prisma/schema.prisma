@@ -195,3 +195,45 @@ model Setting {
 
   @@unique([userId, key])
 }
+
+// Local/remote agent run tracking. In local mode, `id` is the invocationId.
+// In remote mode, `id` is also the invocationId, and `remoteRunId` stores the provider control-plane run id.
+model AgentRun {
+  id          String   @id
+  roomId      String
+  agentId     String
+  userId      String?
+
+  harness     String
+  providerKey String
+  providerType String
+  model       String
+  remoteRunId String?
+
+  state       String   @default("QUEUED") // QUEUED|INPROGRESS|SUCCEEDED|FAILED|CANCELLED
+  errorMessage String?
+
+  queuedAt    DateTime @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  updatedAt   DateTime @updatedAt
+
+  room  Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  agent Agent  @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([roomId])
+  @@index([agentId])
+  @@index([userId])
+  @@index([state])
+}
+
+// Simple rolling-window quota tracker for local provider routing.
+model ProviderUsage {
+  providerKey     String   @id
+  windowStartedAt DateTime
+  windowSeconds   Int
+  messagesUsed    Int
+  messagesLimit   Int
+  updatedAt       DateTime @updatedAt
+}

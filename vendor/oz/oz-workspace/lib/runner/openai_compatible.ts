@@ -1,3 +1,5 @@
+import { ProviderError, RateLimitError } from "@/lib/runner/errors"
+
 type Role = "system" | "user" | "assistant"
 
 export interface OpenAICompatibleMessage {
@@ -38,14 +40,18 @@ export async function runOpenAICompatibleChat(opts: OpenAICompatibleRunOptions):
 
   if (!res.ok) {
     const text = await res.text().catch(() => "")
-    throw new Error(`Provider error: POST ${url} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`)
+    const retryAfter = res.headers.get("retry-after")
+    const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : undefined
+    if (res.status === 429) {
+      throw new RateLimitError(`Provider rate limited: ${text || res.statusText}`, { status: res.status, retryAfterMs })
+    }
+    throw new ProviderError(`Provider error: POST ${url} -> ${res.status} ${res.statusText}${text ? `: ${text}` : ""}`, { status: res.status })
   }
 
   const json = (await res.json()) as any
   const content = json?.choices?.[0]?.message?.content
   if (typeof content !== "string") {
-    throw new Error("Provider error: unexpected response shape (missing choices[0].message.content)")
+    throw new ProviderError("Provider error: unexpected response shape (missing choices[0].message.content)")
   }
   return content
 }
-
