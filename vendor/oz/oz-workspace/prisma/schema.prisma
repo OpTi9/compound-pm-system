@@ -254,6 +254,11 @@ model WorkItem {
   status         String   @default("QUEUED") // QUEUED|CLAIMED|RUNNING|SUCCEEDED|FAILED|CANCELLED
   payload        String   @default("{}")     // JSON-encoded payload (string to keep SQLite/libsql compatibility)
 
+  chainId        String?
+  sourceItemId   String?
+  iteration      Int      @default(0)
+  maxIterations  Int      @default(3)
+
   roomId         String?
   agentId        String?
   sourceTaskId   String?
@@ -274,6 +279,9 @@ model WorkItem {
   sourceTask  Task? @relation(fields: [sourceTaskId], references: [id], onDelete: SetNull)
 
   @@index([status, leaseExpiresAt])
+  @@index([chainId])
+  @@index([sourceItemId])
+  @@index([chainId, iteration])
   @@index([roomId])
   @@index([agentId])
   @@index([sourceTaskId])

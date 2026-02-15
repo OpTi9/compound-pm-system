@@ -5,11 +5,18 @@ import { invokeAgent } from "../lib/invoke-agent"
 
 type WorkStatus = "QUEUED" | "CLAIMED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED"
 
+type WorkItemRow = Awaited<ReturnType<typeof prisma.workItem.findUnique>>
+
 function envInt(key: string, fallback: number): number {
   const raw = (process.env[key] || "").trim()
   if (!raw) return fallback
   const n = Number(raw)
   return Number.isFinite(n) ? n : fallback
+}
+
+function envStr(key: string): string | undefined {
+  const raw = (process.env[key] || "").trim()
+  return raw ? raw : undefined
 }
 
 function now(): Date {
@@ -33,6 +40,211 @@ function newRunId(workItemId: string): string {
   // Prefer inv_ prefix because other subsystems assume invocation ids look like this.
   const h = crypto.createHash("sha1").update(workItemId).digest("hex").slice(0, 16)
   return `inv_work_${h}`
+}
+
+async function ensureChainId(item: { id: string; chainId: string | null }): Promise<string> {
+  if (item.chainId) return item.chainId
+  // First item in a chain: use its own id.
+  await prisma.workItem.updateMany({
+    where: { id: item.id, chainId: null },
+    data: { chainId: item.id },
+  })
+  return item.id
+}
+
+async function resolveRexAgentId(roomId: string, payload: any): Promise<string> {
+  const fromPayload = typeof payload?.reviewAgentId === "string" ? payload.reviewAgentId.trim() : ""
+  if (fromPayload) return fromPayload
+
+  const fromEnv = (envStr("OZ_ORCH_REX_AGENT_ID") || "").trim()
+  if (fromEnv) return fromEnv
+
+  const rexName = (envStr("OZ_ORCH_REX_AGENT_NAME") || "Rex").trim().toLowerCase()
+  const agents = await prisma.roomAgent.findMany({
+    where: { roomId },
+    include: { agent: { select: { id: true, name: true } } },
+  })
+  const match = agents.map((ra) => ra.agent).find((a) => (a?.name || "").trim().toLowerCase() === rexName)
+  if (match?.id) return match.id
+  throw new Error(`Rex agent not found in room ${roomId}. Set OZ_ORCH_REX_AGENT_ID or add an Agent named "${rexName}".`)
+}
+
+async function lastAgentMessageText(roomId: string, agentId: string): Promise<string | null> {
+  const msg = await prisma.message.findFirst({
+    where: { roomId, authorType: "agent", authorId: agentId },
+    orderBy: { timestamp: "desc" },
+    select: { content: true },
+  })
+  const text = (msg?.content || "").trim()
+  return text ? text : null
+}
+
+function parseReviewOutcome(text: string): { outcome: "APPROVED" | "CHANGES_NEEDED"; details: string } | null {
+  const t = (text || "").trim()
+  if (!t) return null
+  const firstLine = t.split(/\r?\n/, 1)[0]?.trim() || ""
+  const head = (firstLine || t.slice(0, 40)).trim().toUpperCase()
+
+  if (head.startsWith("APPROVED")) return { outcome: "APPROVED", details: t }
+  if (head.startsWith("CHANGES_NEEDED")) return { outcome: "CHANGES_NEEDED", details: t }
+
+  // Fallback: anywhere in the response, but prefer CHANGES_NEEDED if both appear.
+  const upper = t.toUpperCase()
+  if (upper.includes("CHANGES_NEEDED")) return { outcome: "CHANGES_NEEDED", details: t }
+  if (upper.includes("APPROVED")) return { outcome: "APPROVED", details: t }
+  return null
+}
+
+async function scheduleReviewForTask(item: WorkItemRow, payload: any, promptText: string) {
+  if (!item) return
+  if (item.type !== "task" || item.status !== "SUCCEEDED") return
+  if (!item.roomId || !item.agentId) return
+
+  const chainId = await ensureChainId({ id: item.id, chainId: item.chainId })
+
+  // Dedupe: only one review per task work item.
+  const existing = await prisma.workItem.findFirst({
+    where: { type: "review", sourceItemId: item.id },
+    select: { id: true },
+  })
+  if (existing) return
+
+  const rexAgentId = await resolveRexAgentId(item.roomId, payload)
+
+  // Best-effort: include the agent's last message, but keep prompts bounded.
+  const implOutput = await lastAgentMessageText(item.roomId, item.agentId).catch(() => null)
+  const reviewPrompt = [
+    "You are Rex. Review the implementation against the original task.",
+    "",
+    "Respond with exactly one of:",
+    "- APPROVED",
+    "- CHANGES_NEEDED: <details>",
+    "",
+    "Original task:",
+    truncate(promptText, 8000),
+    "",
+    implOutput ? "Implementation output:\n" + truncate(implOutput, 12000) : "Implementation output: (not found)",
+    "",
+    "Checklist: correctness, edge cases, security issues, tests, and any regressions.",
+  ].join("\n")
+
+  await prisma.workItem.create({
+    data: {
+      type: "review",
+      status: "QUEUED",
+      payload: JSON.stringify({
+        roomId: item.roomId,
+        agentId: rexAgentId,
+        prompt: reviewPrompt,
+        userId: payload?.userId ?? null,
+        sourceWorkItemId: item.id,
+      }),
+      chainId,
+      sourceItemId: item.id,
+      iteration: item.iteration,
+      maxIterations: item.maxIterations,
+      roomId: item.roomId,
+      agentId: rexAgentId,
+      sourceTaskId: item.sourceTaskId,
+    },
+  })
+}
+
+async function scheduleReworkFromReview(reviewItem: WorkItemRow, reviewPayload: any, reviewText: string) {
+  if (!reviewItem || reviewItem.type !== "review") return
+  if (!reviewItem.roomId) return
+
+  const parsed = parseReviewOutcome(reviewText)
+  if (!parsed) {
+    await prisma.workItem.update({
+      where: { id: reviewItem.id },
+      data: { status: "FAILED", leaseExpiresAt: null, lastError: "Invalid review format (expected APPROVED or CHANGES_NEEDED)" },
+    })
+    return
+  }
+
+  if (parsed.outcome === "APPROVED") {
+    // Review already marked SUCCEEDED by the caller; nothing else to do.
+    return
+  }
+
+  // CHANGES_NEEDED
+  const parentId = (reviewPayload?.sourceWorkItemId || reviewPayload?.source_item_id || reviewItem.sourceItemId || "").toString()
+  if (!parentId) {
+    await prisma.workItem.update({
+      where: { id: reviewItem.id },
+      data: { status: "FAILED", leaseExpiresAt: null, lastError: "Missing sourceWorkItemId for rework" },
+    })
+    return
+  }
+
+  const parent = await prisma.workItem.findUnique({ where: { id: parentId } })
+  if (!parent || parent.type !== "task") {
+    await prisma.workItem.update({
+      where: { id: reviewItem.id },
+      data: { status: "FAILED", leaseExpiresAt: null, lastError: "Invalid sourceWorkItemId (parent task not found)" },
+    })
+    return
+  }
+  if (!parent.roomId || !parent.agentId) {
+    await prisma.workItem.update({
+      where: { id: reviewItem.id },
+      data: { status: "FAILED", leaseExpiresAt: null, lastError: "Parent task missing roomId/agentId" },
+    })
+    return
+  }
+
+  const nextIteration = parent.iteration + 1
+  const maxIterations = parent.maxIterations
+  if (nextIteration > maxIterations) {
+    await prisma.workItem.update({
+      where: { id: reviewItem.id },
+      data: { status: "FAILED", leaseExpiresAt: null, lastError: `Max iterations exceeded (${maxIterations})` },
+    })
+    return
+  }
+
+  // Dedupe: only one rework task per review work item.
+  const existing = await prisma.workItem.findFirst({
+    where: { type: "task", sourceItemId: reviewItem.id },
+    select: { id: true },
+  })
+  if (existing) return
+
+  const parentPayload = safeJsonParse<any>(parent.payload, {})
+  const originalPrompt = typeof parentPayload?.prompt === "string" ? parentPayload.prompt : ""
+
+  const reworkPrompt = [
+    "You implemented a task and Rex requested changes.",
+    "",
+    "Apply the requested changes, then reply with what changed and why.",
+    "",
+    "Original task:",
+    truncate(originalPrompt || "(missing)", 8000),
+    "",
+    "Rex review (CHANGES_NEEDED):",
+    truncate(parsed.details, 12000),
+  ].join("\n")
+
+  await prisma.workItem.create({
+    data: {
+      type: "task",
+      status: "QUEUED",
+      payload: JSON.stringify({
+        roomId: parent.roomId,
+        agentId: parent.agentId,
+        prompt: reworkPrompt,
+        userId: reviewPayload?.userId ?? parentPayload?.userId ?? null,
+      }),
+      chainId: parent.chainId || parent.id,
+      sourceItemId: reviewItem.id,
+      iteration: nextIteration,
+      maxIterations: maxIterations,
+      roomId: parent.roomId,
+      agentId: parent.agentId,
+      sourceTaskId: parent.sourceTaskId,
+    },
+  })
 }
 
 async function claimNext(opts: {
@@ -164,11 +376,13 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
   }
 
   const runId = item.runId || newRunId(item.id)
+  const chainId = await ensureChainId({ id: item.id, chainId: item.chainId })
   await prisma.workItem.updateMany({
     where: { id: item.id, status: "CLAIMED" },
     data: {
       status: "RUNNING",
       runId,
+      chainId,
       // Extend the lease for the duration of execution; it can be bumped again on each tick.
       leaseExpiresAt: new Date(Date.now() + opts.leaseMs),
     },
@@ -204,6 +418,39 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
         lastError: null,
       },
     })
+
+    // Completion hooks:
+    // - task success => enqueue review
+    // - review success => parse outcome; if changes needed enqueue rework task
+    if (item.type === "task") {
+      await scheduleReviewForTask({ ...item, status: "SUCCEEDED", chainId }, payload, prompt).catch(async (e) => {
+        const msg = e instanceof Error ? e.message : String(e)
+        await prisma.workItem.updateMany({
+          where: { id: item.id, status: "SUCCEEDED" },
+          data: { lastError: truncate(`review_enqueue_failed: ${msg}`, 4000) },
+        })
+      })
+    } else if (item.type === "review") {
+      const reviewText = (res.message as any)?.content || (res.message as any)?.message?.content || ""
+      const parsed = parseReviewOutcome(reviewText)
+      if (parsed?.outcome === "APPROVED") {
+        // no-op (review succeeded and approved)
+      } else if (parsed?.outcome === "CHANGES_NEEDED") {
+        await scheduleReworkFromReview({ ...item, status: "SUCCEEDED", chainId }, payload, reviewText).catch(async (e) => {
+          const msg = e instanceof Error ? e.message : String(e)
+          await prisma.workItem.updateMany({
+            where: { id: item.id, status: "SUCCEEDED" },
+            data: { lastError: truncate(`rework_enqueue_failed: ${msg}`, 4000) },
+          })
+        })
+      } else {
+        // Invalid format: treat the review work item as failed so it is visible.
+        await prisma.workItem.updateMany({
+          where: { id: item.id, status: "SUCCEEDED" },
+          data: { status: "FAILED", lastError: "Invalid review format (expected APPROVED or CHANGES_NEEDED)" },
+        })
+      }
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     await prisma.workItem.update({

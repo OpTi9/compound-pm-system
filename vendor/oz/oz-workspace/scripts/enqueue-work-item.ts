@@ -3,7 +3,7 @@ import { prisma } from "../lib/prisma"
 function usage(): never {
   // eslint-disable-next-line no-console
   console.error(
-    "Usage: tsx scripts/enqueue-work-item.ts --room <roomId> --agent <agentId> --prompt <text> [--type <type>] [--user <userId>] [--max-attempts N]"
+    "Usage: tsx scripts/enqueue-work-item.ts --room <roomId> --agent <agentId> --prompt <text> [--type <type>] [--user <userId>] [--max-attempts N] [--chain <chainId>] [--iteration N] [--max-iterations N]"
   )
   process.exit(2)
 }
@@ -28,6 +28,9 @@ async function main() {
   const type = getArg("--type") || "task"
   const userId = getArg("--user")
   const maxAttempts = getIntArg("--max-attempts")
+  const chainId = getArg("--chain")
+  const iteration = getIntArg("--iteration")
+  const maxIterations = getIntArg("--max-iterations")
 
   if (!roomId || !agentId || !prompt) usage()
 
@@ -41,6 +44,9 @@ async function main() {
       roomId,
       agentId,
       ...(maxAttempts ? { maxAttempts } : {}),
+      ...(chainId ? { chainId } : {}),
+      ...(iteration !== null && iteration !== undefined ? { iteration } : {}),
+      ...(maxIterations !== null && maxIterations !== undefined ? { maxIterations } : {}),
     },
     select: { id: true },
   })
@@ -54,4 +60,3 @@ main().catch((e) => {
   console.error(e)
   process.exit(1)
 })
-
