@@ -10,6 +10,71 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
+function safeJsonParse(raw: string): unknown {
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
+function extractPayloadTitle(rawPayload: string | null): string | null {
+  if (!rawPayload) return null
+  const v = safeJsonParse(rawPayload)
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null
+  const title = (v as Record<string, unknown>).title
+  return typeof title === "string" && title.trim() ? title.trim() : null
+}
+
+function deriveOutputPreview(text: string, workType: string): { preview: string | null; reviewOutcome: "APPROVED" | "CHANGES_NEEDED" | null } {
+  const lines = (text || "")
+    .split(/\r?\n/g)
+    .map((l) => l.trim())
+    .filter(Boolean)
+
+  if (lines.length === 0) return { preview: null, reviewOutcome: null }
+
+  // Reviews: prefer explicit outcome lines.
+  const changesLine = lines.find((l) => /^CHANGES_NEEDED:/i.test(l))
+  if (changesLine) {
+    return { preview: changesLine, reviewOutcome: "CHANGES_NEEDED" }
+  }
+  const approvedLine = lines.find((l) => /^APPROVED\b/i.test(l))
+  if (approvedLine) {
+    return { preview: approvedLine, reviewOutcome: "APPROVED" }
+  }
+
+  // For non-review items, try to avoid CLI boilerplate and show something meaningful.
+  const noisyPrefixes = [
+    "openai codex v",
+    "--------",
+    "workdir:",
+    "model:",
+    "provider:",
+    "approval:",
+    "sandbox:",
+    "reasoning effort:",
+    "reasoning summaries:",
+    "session id:",
+    "tokens used",
+    "mcp startup:",
+    "user",
+    "codex",
+    "thinking",
+    "exec",
+  ]
+  const isNoisy = (l: string) => {
+    const s = l.toLowerCase()
+    return noisyPrefixes.some((p) => s.startsWith(p))
+  }
+
+  const candidates = lines.filter((l) => !isNoisy(l))
+  const chosen = (candidates.length ? candidates[candidates.length - 1] : lines[lines.length - 1]) || ""
+
+  const truncated = chosen.length > 180 ? `${chosen.slice(0, 177)}...` : chosen
+  return { preview: truncated, reviewOutcome: null }
+}
+
 function clampInt(n: number, min: number, max: number): number {
   if (!Number.isFinite(n)) return min
   return Math.min(Math.max(Math.floor(n), min), max)
@@ -39,6 +104,7 @@ export async function GET(request: Request) {
     const type = (searchParams.get("type") || "").trim()
     const limit = clampInt(Number(searchParams.get("limit") || "200"), 1, 500)
     const cursor = parseTsIdCursor(searchParams.get("cursor"))
+    const includePreview = (searchParams.get("includePreview") || "").trim() === "1"
 
     if (roomId) {
       const room = await prisma.room.findUnique({ where: { id: roomId, userId }, select: { id: true } })
@@ -85,8 +151,30 @@ export async function GET(request: Request) {
     const items = hasMore ? rows.slice(0, limit) : rows
     const nextCursor = hasMore ? encodeTsIdCursor(items[items.length - 1].createdAt, items[items.length - 1].id) : null
 
+    const contentByRunId = new Map<string, string>()
+    if (includePreview) {
+      const runIds = Array.from(new Set(items.map((w) => w.runId).filter(Boolean) as string[]))
+      if (runIds.length) {
+        const messages = await prisma.message.findMany({
+          where: { id: { in: runIds } },
+          select: { id: true, content: true },
+        }).catch(() => [] as Array<{ id: string; content: string }>)
+        for (const m of messages) {
+          contentByRunId.set(m.id, m.content || "")
+        }
+      }
+    }
+
     const res = NextResponse.json({
       items: items.map((w) => ({
+        ...(includePreview
+          ? (() => {
+              const title = extractPayloadTitle(w.payload)
+              const content = w.runId ? contentByRunId.get(w.runId) : undefined
+              const derived = content ? deriveOutputPreview(content, w.type) : { preview: null, reviewOutcome: null }
+              return { title, outputPreview: derived.preview, reviewOutcome: derived.reviewOutcome }
+            })()
+          : {}),
         id: w.id,
         type: w.type,
         status: w.status,

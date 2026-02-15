@@ -37,6 +37,10 @@ yarn-error.log*
 
 # databases
 *.db
+*.db-journal
+
+# local debug scratch
+err.txt
 
 # internal notes
 convo.md

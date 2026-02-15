@@ -50,6 +50,9 @@ type WorkItem = {
   agentId: string | null
   epicId?: string | null
   runId: string | null
+  title?: string | null
+  outputPreview?: string | null
+  reviewOutcome?: "APPROVED" | "CHANGES_NEEDED" | null
   attempts: number
   maxAttempts: number
   lastError: string | null
@@ -240,7 +243,7 @@ export default function WorkPage() {
   }, [])
 
   const refreshWorkItems = React.useCallback(async (chainId: string) => {
-    const res = await fetchJson<{ items: WorkItem[] }>(`/api/work-items?chainId=${encodeURIComponent(chainId)}&limit=500`)
+    const res = await fetchJson<{ items: WorkItem[] }>(`/api/work-items?chainId=${encodeURIComponent(chainId)}&limit=500&includePreview=1`)
     if (!res.ok) {
       setError(res.error)
       return
@@ -265,7 +268,7 @@ export default function WorkPage() {
     if (!res.ok) return
     setOrch(res.data)
 
-    const running = await fetchJson<{ items: WorkItem[] }>(`/api/work-items?roomId=${encodeURIComponent(roomId)}&status=RUNNING&limit=200`)
+    const running = await fetchJson<{ items: WorkItem[] }>(`/api/work-items?roomId=${encodeURIComponent(roomId)}&status=RUNNING&limit=200&includePreview=1`)
     if (running.ok) setRoomRunning(running.data.items)
   }, [roomId])
 
@@ -823,33 +826,57 @@ export default function WorkPage() {
                                 <div className="text-[0.625rem] text-muted-foreground">{g.items.length} item(s)</div>
                               </div>
                               <div className="space-y-2">
-                                {g.items.map((w) => (
-                                  <div
-                                    key={w.id}
-                                    className="rounded-md border p-3 cursor-pointer hover:bg-muted/30"
-                                    role="button"
+	                                {g.items.map((w) => (
+	                                  <div
+	                                    key={w.id}
+	                                    className="rounded-md border p-3 cursor-pointer hover:bg-muted/30"
+	                                    role="button"
                                     tabIndex={0}
                                     onClick={() => openWorkItem(w.id)}
                                     onKeyDown={(e) => {
                                       if (e.key === "Enter" || e.key === " ") openWorkItem(w.id)
                                     }}
                                   >
-                                    <div className="flex items-center justify-between gap-2">
-                                      <div className="min-w-0">
-                                        <div className="flex items-center gap-2">
-                                          <span className="text-xs font-medium">{w.type}</span>
-                                          <Badge variant={badgeVariantForStatus(w.status)}>{w.status}</Badge>
-                                          {w.type === "task" || w.type === "review" ? (
-                                            <span className="text-[0.625rem] text-muted-foreground">
-                                              iter {w.iteration}/{w.maxIterations}
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                        <div className="mt-1 text-[0.625rem] text-muted-foreground">
-                                          {w.agent?.name ? `Agent: ${w.agent.name}` : (w.agentId ? `Agent: ${w.agentId}` : "Agent: -")}
-                                          {" · "}
-                                          Created {fmtShort(w.createdAt)}
-                                          {w.runId ? ` · run ${w.runId}` : ""}
+	                                    <div className="flex items-center justify-between gap-2">
+	                                      <div className="min-w-0">
+	                                        <div className="flex items-center gap-2">
+	                                          <span className="text-xs font-medium">{w.type}</span>
+	                                          <Badge variant={badgeVariantForStatus(w.status)}>{w.status}</Badge>
+	                                          {w.type === "task" || w.type === "review" ? (
+	                                            <span className="text-[0.625rem] text-muted-foreground">
+	                                              iter {w.iteration}/{w.maxIterations}
+	                                            </span>
+	                                          ) : null}
+	                                        </div>
+	                                        {(w.title || w.outputPreview || (w.type === "review" && w.reviewOutcome)) && (
+	                                          <div className="mt-1 space-y-1">
+	                                            {w.title && (
+	                                              <div className="text-xs font-medium truncate">
+	                                                {w.title}
+	                                              </div>
+	                                            )}
+	                                            {w.type === "review" && w.reviewOutcome === "CHANGES_NEEDED" && (
+	                                              <div className="text-[0.6875rem] text-destructive">
+	                                                CHANGES_NEEDED
+	                                              </div>
+	                                            )}
+	                                            {w.type === "review" && w.reviewOutcome === "APPROVED" && (
+	                                              <div className="text-[0.6875rem] text-muted-foreground">
+	                                                APPROVED
+	                                              </div>
+	                                            )}
+	                                            {w.outputPreview && (
+	                                              <div className="text-[0.6875rem] text-muted-foreground truncate">
+	                                                {w.outputPreview}
+	                                              </div>
+	                                            )}
+	                                          </div>
+	                                        )}
+	                                        <div className="mt-1 text-[0.625rem] text-muted-foreground">
+	                                          {w.agent?.name ? `Agent: ${w.agent.name}` : (w.agentId ? `Agent: ${w.agentId}` : "Agent: -")}
+	                                          {" · "}
+	                                          Created {fmtShort(w.createdAt)}
+	                                          {w.runId ? ` · run ${w.runId}` : ""}
                                         </div>
                                       </div>
                                       <div className="flex items-center gap-2">

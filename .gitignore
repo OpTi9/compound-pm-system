@@ -55,3 +55,6 @@ site/
 # Local development
 .local/
 docker-compose.override.yml
+
+# Local cloned projects (used by agents; not part of this repo)
+projects/
