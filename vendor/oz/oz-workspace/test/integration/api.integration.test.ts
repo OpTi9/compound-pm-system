@@ -13,6 +13,7 @@ let tasksRoute: Awaited<Mod<typeof import("@/app/api/tasks/route")>>
 let prdsRoute: Awaited<Mod<typeof import("@/app/api/prds/route")>>
 let workItemsRoute: Awaited<Mod<typeof import("@/app/api/work-items/route")>>
 let eventsRoute: Awaited<Mod<typeof import("@/app/api/events/route")>>
+let healthRoute: Awaited<Mod<typeof import("@/app/api/health/route")>>
 let eventBroadcaster: typeof import("@/lib/event-broadcaster").eventBroadcaster
 let NextRequestCtor: typeof import("next/server").NextRequest
 
@@ -57,6 +58,7 @@ before(async () => {
   prdsRoute = await import("@/app/api/prds/route")
   workItemsRoute = await import("@/app/api/work-items/route")
   eventsRoute = await import("@/app/api/events/route")
+  healthRoute = await import("@/app/api/health/route")
   eventBroadcaster = (await import("@/lib/event-broadcaster")).eventBroadcaster
   NextRequestCtor = (await import("next/server")).NextRequest
 })
@@ -198,4 +200,15 @@ test("events SSE: in-memory subscription receives broadcast events", async () =>
 
   ac.abort()
   await reader.cancel().catch(() => {})
+})
+
+test("health: returns db/orchestrator/events snapshot", async () => {
+  const res = await healthRoute.GET()
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.ok, true)
+  assert.ok(body.db)
+  assert.equal(body.db.ok, true)
+  assert.ok(body.orchestrator)
+  assert.ok(body.events)
 })
