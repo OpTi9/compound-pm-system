@@ -1,0 +1,76 @@
+name: Release Request
+description: PM intake for agent-driven release work (versioned).
+title: "[MINOR] <brief description>"
+labels:
+  - status:backlog
+body:
+  - type: dropdown
+    id: version_type
+    attributes:
+      label: Version type
+      options:
+        - major (breaking changes)
+        - minor (new features)
+        - patch (bug fixes)
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One sentence describing what this release delivers.
+      placeholder: Add X so that Y.
+    validations:
+      required: true
+
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User story
+      placeholder: As a ..., I want ..., so that ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      description: Define what "done" looks like. Use checkboxes.
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+        - [ ] Criterion 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals (out of scope)
+      placeholder: |
+        - Feature X (defer)
+        - Refactor Y (not needed)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Critical (blocks other work)
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / context
+      description: Links, constraints, examples, screenshots.
+    validations:
+      required: false
+

@@ -1,0 +1,116 @@
+name: Oz Auto Fix Issue
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  auto_fix:
+    if: github.event.label.name == 'oz-agent'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Construct Prompt
+        id: prompt
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const issue = context.payload.issue;
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              per_page: 100,
+            });
+
+            const description = issue.body || "No description provided.";
+            let commentsNote = "There are no previous comments on this issue.";
+            let commentsInstructions = "";
+            if (comments.length) {
+              const commentsText = comments
+                .map((c) => `- ${c.user?.login || "unknown"} (${c.created_at}): ${c.body}`)
+                .join("\n");
+              fs.writeFileSync("issue_comments.txt", commentsText, "utf8");
+              commentsNote = "All previous issue comments are stored in `issue_comments.txt` in the workspace.";
+              commentsInstructions = "\n- Optionally, read `issue_comments.txt` to understand prior discussion and clarifications.";
+            }
+
+            const prompt = [
+              "You are an expert software engineer.",
+              `You have been assigned to fix GitHub Issue #${issue.number}.`,
+              "",
+              "**Issue Details**:",
+              `- **Title**: ${issue.title}`,
+              `- **Description**: ${description}`,
+              "",
+              "**Previous Issue Comments**:",
+              commentsNote,
+              "",
+              "**Instructions**:",
+              "1. Analyze the issue thoroughly." + commentsInstructions,
+              "2. Implement the smallest correct fix that satisfies the issue.",
+              "3. Add/adjust tests if needed.",
+              "4. Run relevant checks (tests/lint) if available.",
+              "5. Output a brief summary of what you changed. Do not paste a diff.",
+            ].join("\n");
+
+            core.setOutput("prompt", prompt);
+
+      - name: Run Oz Agent
+        id: agent
+        uses: ./.github/actions/oz-agent-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          prompt: ${{ steps.prompt.outputs.prompt }}
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
+          oz_api_base_url: ${{ secrets.OZ_API_BASE_URL }}
+          oz_cli_path: ${{ vars.OZ_CLI_PATH || 'oz' }}
+          oz_cli_download_url: ${{ secrets.OZ_CLI_DEB_URL }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
+
+      - name: Create PR and Comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          AGENT_OUTPUT: ${{ steps.agent.outputs.agent_output }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # Remove temporary files that should not be committed
+          rm -f issue_comments.txt issue_description.txt
+
+          if [[ -z "${AGENT_OUTPUT}" ]]; then
+            AGENT_OUTPUT="(empty)"
+          fi
+
+          # Check for changes
+          if [[ -z "$(git status --porcelain)" ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "No code changes detected.\n\n**Agent Output:**\n${AGENT_OUTPUT}"
+            exit 0
+          fi
+
+          BRANCH_NAME="fix/issue-${ISSUE_NUMBER}"
+
+          git config user.name "Oz Agent"
+          git config user.email "oz-agent@users.noreply.github.com"
+          git checkout -b "$BRANCH_NAME"
+          git add .
+          git commit -m "Fix issue #${ISSUE_NUMBER}"
+          git push origin "$BRANCH_NAME" --force
+
+          TITLE="Fix Issue #${ISSUE_NUMBER}: ${{ github.event.issue.title }}"
+          BODY=$'This PR attempts to fix the issue.\n\n**Agent Summary**:\n'"${AGENT_OUTPUT}"$'\n\nCloses #'"${ISSUE_NUMBER}"
+
+          PR_URL="$(gh pr create --title "$TITLE" --body "$BODY" --base main --head "$BRANCH_NAME")"
+          gh issue comment "$ISSUE_NUMBER" --body "Created PR: ${PR_URL}"
+

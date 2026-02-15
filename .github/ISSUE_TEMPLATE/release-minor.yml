@@ -1,0 +1,54 @@
+name: Release Request (Minor)
+description: Feature release request.
+title: "[MINOR] <brief description>"
+labels:
+  - version:minor
+  - status:backlog
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      placeholder: One sentence describing what this release delivers.
+    validations:
+      required: true
+  - type: textarea
+    id: user_story
+    attributes:
+      label: User story
+      placeholder: As a ..., I want ..., so that ...
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Acceptance criteria
+      placeholder: |
+        - [ ] Criterion 1
+        - [ ] Criterion 2
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals (out of scope)
+    validations:
+      required: false
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Critical (blocks other work)
+        - High
+        - Medium
+        - Low
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes / context
+    validations:
+      required: false
+

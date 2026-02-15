@@ -1,0 +1,161 @@
+name: Oz Plan Release (Avery + Rex)
+
+on:
+  issues:
+    types: [opened, edited, labeled]
+  workflow_dispatch: {}
+
+jobs:
+  plan:
+    # Run when any version:* label is present on the issue (or manual dispatch).
+    if: github.event_name == 'workflow_dispatch' || contains(join(github.event.issue.labels.*.name, ','), 'version:')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Planning Prompt (Avery)
+        id: avery_prompt
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            if (!issue) {
+              core.setFailed("No issue in event payload (did you run workflow_dispatch without selecting an issue?)");
+              return;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              per_page: 100,
+            });
+
+            const labels = (issue.labels || []).map(l => (typeof l === "string" ? l : l.name)).filter(Boolean);
+            const description = issue.body || "(empty)";
+            const commentsText = comments
+              .slice(-50)
+              .map(c => `- ${c.user?.login || "unknown"} (${c.created_at}): ${c.body}`)
+              .join("\n");
+
+            const prompt = [
+              "You are Avery, the Architect.",
+              "Task: read the GitHub issue and produce an airtight implementation plan and a decomposed task list.",
+              "",
+              "OUTPUT FORMAT (mandatory): return a single JSON object, preferably in a ```json code fence```.",
+              "Schema:",
+              "{",
+              '  \"summary\": \"...\",',
+              '  \"assumptions\": [\"...\"],',
+              '  \"risks\": [\"...\"],',
+              '  \"tasks\": [',
+              '    { \"title\": \"...\", \"prompt\": \"...\" }',
+              "  ]",
+              "}",
+              "",
+              "Rules:",
+              "- Keep tasks independently executable and as parallel as possible.",
+              "- Each task prompt must reference concrete files/paths and include acceptance criteria.",
+              "- If you need clarification, put it in assumptions; do not ask questions back.",
+              "",
+              `Issue #${issue.number}: ${issue.title}`,
+              `Labels: ${labels.join(", ") || "(none)"}`,
+              "",
+              "Issue body:",
+              description,
+              "",
+              "Recent comments (up to 50):",
+              commentsText || "(none)",
+            ].join("\n");
+
+            core.setOutput("prompt", prompt);
+
+      - name: Run Avery (plan + decompose)
+        id: avery
+        uses: ./.github/actions/oz-agent-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          prompt: ${{ steps.avery_prompt.outputs.prompt }}
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
+          oz_api_base_url: ${{ secrets.OZ_API_BASE_URL }}
+          oz_cli_path: ${{ vars.OZ_CLI_PATH || 'oz' }}
+          oz_cli_download_url: ${{ secrets.OZ_CLI_DEB_URL }}
+          model: ${{ vars.OZ_MODEL_AVERY || '' }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
+          output_format: text
+
+      - name: Build Review Prompt (Rex)
+        id: rex_prompt
+        uses: actions/github-script@v7
+        env:
+          AVERY_OUTPUT: ${{ steps.avery.outputs.agent_output }}
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const avery = process.env.AVERY_OUTPUT || "";
+
+            const prompt = [
+              "You are Rex, the Relentless Auditor.",
+              "Review Avery's plan for feasibility, missing edge cases, security/perf concerns, and test coverage.",
+              "",
+              "Respond with exactly one of:",
+              "- APPROVED",
+              "- CHANGES_NEEDED: <one sentence summary>",
+              "  - bullet points with required fixes",
+              "",
+              `Issue #${issue.number}: ${issue.title}`,
+              "",
+              "Avery output:",
+              avery || "(empty)",
+            ].join("\n");
+
+            core.setOutput("prompt", prompt);
+
+      - name: Run Rex (review)
+        id: rex
+        uses: ./.github/actions/oz-agent-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
+        with:
+          prompt: ${{ steps.rex_prompt.outputs.prompt }}
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
+          oz_api_base_url: ${{ secrets.OZ_API_BASE_URL }}
+          oz_cli_path: ${{ vars.OZ_CLI_PATH || 'oz' }}
+          oz_cli_download_url: ${{ secrets.OZ_CLI_DEB_URL }}
+          model: ${{ vars.OZ_MODEL_REX || '' }}
+          profile: ${{ vars.OZ_AGENT_PROFILE || '' }}
+          output_format: text
+
+      - name: Comment Plan + Review
+        uses: actions/github-script@v7
+        env:
+          AVERY_OUTPUT: ${{ steps.avery.outputs.agent_output }}
+          REX_OUTPUT: ${{ steps.rex.outputs.agent_output }}
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const avery = (process.env.AVERY_OUTPUT || "").trim();
+            const rex = (process.env.REX_OUTPUT || "").trim();
+
+            const body = [
+              "## Avery Plan (auto)",
+              avery ? "```json\n" + avery.replace(/^```json\s*|\s*```$/g, "") + "\n```" : "_(empty)_",
+              "",
+              "## Rex Review (auto)",
+              rex ? "```text\n" + rex + "\n```" : "_(empty)_",
+            ].join("\n");
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body,
+            });
+

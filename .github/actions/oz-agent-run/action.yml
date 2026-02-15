@@ -1,0 +1,139 @@
+name: Oz Agent Run
+description: Run the oz agent CLI (self-hosted Oz API) and capture stdout as an output.
+
+inputs:
+  prompt:
+    description: Prompt text for the agent.
+    required: true
+  oz_api_key:
+    description: Oz API key (bearer token) used by the oz CLI.
+    required: true
+  oz_api_base_url:
+    description: Optional Oz API base URL (e.g. https://oz.example.com/api/v1). Passed via OZ_API_BASE_URL.
+    required: false
+    default: ""
+  oz_cli_path:
+    description: Path to an existing oz binary on the runner.
+    required: false
+    default: "oz"
+  oz_cli_download_url:
+    description: Optional URL to a .deb for the oz CLI (used if oz is not installed).
+    required: false
+    default: ""
+  model:
+    description: Optional model ID override (oz --model).
+    required: false
+    default: ""
+  name:
+    description: Optional run name (oz --name).
+    required: false
+    default: ""
+  mcp:
+    description: Optional MCP config JSON (oz --mcp).
+    required: false
+    default: ""
+  profile:
+    description: Optional Oz profile name (oz --profile). If empty, uses --sandboxed.
+    required: false
+    default: ""
+  cwd:
+    description: Optional working directory for the agent (oz --cwd).
+    required: false
+    default: ""
+  output_format:
+    description: Output format for oz CLI (oz --output-format).
+    required: false
+    default: "text"
+  share:
+    description: Optional newline-separated list of share recipients (repeated oz --share).
+    required: false
+    default: ""
+
+outputs:
+  agent_output:
+    description: Raw stdout returned by oz.
+    value: ${{ steps.run.outputs.agent_output }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install oz (optional)
+      if: ${{ inputs.oz_cli_download_url != '' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v "${{ inputs.oz_cli_path }}" >/dev/null 2>&1; then
+          exit 0
+        fi
+        echo "oz binary not found; installing from .deb URL"
+        tmp="$(mktemp -d)"
+        curl -fsSL "${{ inputs.oz_cli_download_url }}" -o "$tmp/oz.deb"
+        sudo dpkg -i "$tmp/oz.deb"
+        sudo apt-get -f install -y
+
+    - id: run
+      name: Run oz agent
+      shell: bash
+      env:
+        OZ_API_KEY: ${{ inputs.oz_api_key }}
+        OZ_API_BASE_URL: ${{ inputs.oz_api_base_url }}
+        PROMPT: ${{ inputs.prompt }}
+        MODEL: ${{ inputs.model }}
+        RUN_NAME: ${{ inputs.name }}
+        MCP: ${{ inputs.mcp }}
+        PROFILE: ${{ inputs.profile }}
+        RUN_CWD: ${{ inputs.cwd }}
+        OUTPUT_FORMAT: ${{ inputs.output_format }}
+        SHARE: ${{ inputs.share }}
+      run: |
+        set -euo pipefail
+
+        if [[ -z "${OZ_API_KEY}" ]]; then
+          echo "Missing OZ_API_KEY input" >&2
+          exit 2
+        fi
+
+        # Allow empty base URL (oz CLI defaults). If provided, export it.
+        if [[ -z "${OZ_API_BASE_URL}" ]]; then
+          unset OZ_API_BASE_URL
+        fi
+
+        OZ_BIN="${{ inputs.oz_cli_path }}"
+        if ! command -v "$OZ_BIN" >/dev/null 2>&1; then
+          echo "oz CLI not found at: $OZ_BIN" >&2
+          echo "Set inputs.oz_cli_path to an installed binary, or provide inputs.oz_cli_download_url." >&2
+          exit 2
+        fi
+
+        args=(agent run)
+        args+=(--prompt "$PROMPT")
+
+        [[ -n "${MODEL}" ]] && args+=(--model "$MODEL")
+        [[ -n "${RUN_NAME}" ]] && args+=(--name "$RUN_NAME")
+        [[ -n "${MCP}" ]] && args+=(--mcp "$MCP")
+        [[ -n "${RUN_CWD}" ]] && args+=(--cwd "$RUN_CWD")
+
+        if [[ -n "${PROFILE}" ]]; then
+          args+=(--profile "$PROFILE")
+        else
+          args+=(--sandboxed)
+        fi
+
+        [[ -n "${OUTPUT_FORMAT}" ]] && args+=(--output-format "$OUTPUT_FORMAT")
+
+        if [[ -n "${SHARE}" ]]; then
+          while IFS= read -r recipient; do
+            recipient="$(echo "$recipient" | xargs)"
+            [[ -n "$recipient" ]] && args+=(--share "$recipient")
+          done <<< "$SHARE"
+        fi
+
+        output="$("$OZ_BIN" "${args[@]}")"
+
+        delim="OZ_OUT_$(date +%s%N)"
+        {
+          echo "agent_output<<${delim}"
+          echo "$output"
+          echo "${delim}"
+        } >> "$GITHUB_OUTPUT"
+
