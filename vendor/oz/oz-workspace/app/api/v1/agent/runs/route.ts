@@ -3,13 +3,14 @@ import { prisma } from "@/lib/prisma"
 import { requireOzApiAuth } from "@/lib/oz-api-auth"
 
 export async function GET(request: Request) {
-  const auth = requireOzApiAuth(request)
-  if (auth) return auth
+  const auth = await requireOzApiAuth(request)
+  if (!auth.ok) return auth.response
 
   const url = new URL(request.url)
   const limit = Math.min(Math.max(Number(url.searchParams.get("limit") || "50"), 1), 200)
 
   const runs = await prisma.agentRun.findMany({
+    where: auth.ctx.isAdmin ? undefined : { userId: auth.ctx.userId },
     orderBy: { queuedAt: "desc" },
     take: limit,
   })
@@ -36,4 +37,3 @@ export async function GET(request: Request) {
     next_cursor: null,
   })
 }
-

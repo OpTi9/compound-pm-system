@@ -1,6 +1,6 @@
 import { NextResponse, after } from "next/server"
 import { requireOzApiAuth } from "@/lib/oz-api-auth"
-import { harnessFromAgentRunRequest, ensureOzApiAgent, ensureOzApiRoom } from "@/lib/oz-api-model"
+import { harnessFromAgentRunRequest, ensureOzApiAgentForUser, ensureOzApiRoomForUser } from "@/lib/oz-api-model"
 import { prisma } from "@/lib/prisma"
 import { runLocalAgent } from "@/lib/runner/local"
 import crypto from "node:crypto"
@@ -8,8 +8,8 @@ import crypto from "node:crypto"
 export const maxDuration = 300
 
 export async function POST(request: Request) {
-  const auth = requireOzApiAuth(request)
-  if (auth) return auth
+  const auth = await requireOzApiAuth(request)
+  if (!auth.ok) return auth.response
 
   const body = await request.json().catch(() => null)
   const prompt = body?.prompt
@@ -18,8 +18,8 @@ export async function POST(request: Request) {
   }
 
   const harness = harnessFromAgentRunRequest(body)
-  const roomId = await ensureOzApiRoom()
-  const agentId = await ensureOzApiAgent(harness)
+  const roomId = await ensureOzApiRoomForUser(auth.ctx.userId)
+  const agentId = await ensureOzApiAgentForUser(harness, auth.ctx.userId)
 
   const runId = `run_${crypto.randomUUID()}`
   const now = new Date()
@@ -29,7 +29,7 @@ export async function POST(request: Request) {
       id: runId,
       roomId,
       agentId,
-      userId: null,
+      userId: auth.ctx.userId,
       title: body?.config?.name || "API run",
       prompt,
       harness,
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
   after(async () => {
     try {
-      await runLocalAgent({ taskId: runId, roomId, agentId, userId: null, prompt })
+      await runLocalAgent({ taskId: runId, roomId, agentId, userId: auth.ctx.userId, prompt })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       await prisma.agentRun.updateMany({
@@ -59,4 +59,3 @@ export async function POST(request: Request) {
 
   return NextResponse.json({ run_id: runId, task_id: runId })
 }
-

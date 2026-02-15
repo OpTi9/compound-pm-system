@@ -70,8 +70,6 @@ export async function runLocalAgent(opts: {
       })
 
       try {
-        await recordProviderCallStart(candidate)
-
         if (candidate.type === "anthropic") {
           if (!candidate.apiKey) throw new Error("Missing API key for Anthropic provider (set OZ_PROVIDER_CLAUDE_API_KEY or OZ_PROVIDER_API_KEY)")
           response = await runAnthropicMessages({
@@ -103,6 +101,8 @@ export async function runLocalAgent(opts: {
           })
         }
 
+        // Only count usage against quotas once the provider call succeeds.
+        await recordProviderCallStart(candidate)
         break
       } catch (err) {
         lastErr = err

@@ -11,19 +11,27 @@ function inferHarness(modelId?: string | null): string {
 }
 
 export async function ensureOzApiRoom(): Promise<string> {
-  const id = "ozapi_room"
+  return ensureOzApiRoomForUser(null)
+}
+
+export async function ensureOzApiRoomForUser(userId: string | null): Promise<string> {
+  const id = userId ? `ozapi_room_${userId}` : "ozapi_room"
   await prisma.room.upsert({
     where: { id },
-    create: { id, name: "Oz API", description: "Runs created via /api/v1/agent/run", userId: null },
+    create: { id, name: "Oz API", description: "Runs created via /api/v1/agent/run", userId },
     update: {},
   })
   return id
 }
 
 export async function ensureOzApiAgent(harness: string): Promise<string> {
-  const roomId = await ensureOzApiRoom()
+  return ensureOzApiAgentForUser(harness, null)
+}
+
+export async function ensureOzApiAgentForUser(harness: string, userId: string | null): Promise<string> {
+  const roomId = await ensureOzApiRoomForUser(userId)
   const key = harness.toLowerCase().replace(/[^a-z0-9]+/g, "_")
-  const id = `ozapi_agent_${key}`
+  const id = userId ? `ozapi_agent_${userId}_${key}` : `ozapi_agent_${key}`
   const name = `ozapi-${key}`
 
   await prisma.agent.upsert({
@@ -41,7 +49,7 @@ export async function ensureOzApiAgent(harness: string): Promise<string> {
       mcpServers: "[]",
       scripts: "[]",
       status: "idle",
-      userId: null,
+      userId,
     },
     update: { harness },
   })
@@ -58,4 +66,3 @@ export async function ensureOzApiAgent(harness: string): Promise<string> {
 export function harnessFromAgentRunRequest(body: any): string {
   return inferHarness(body?.config?.model_id ?? null)
 }
-

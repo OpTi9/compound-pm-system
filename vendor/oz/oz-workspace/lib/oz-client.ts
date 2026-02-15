@@ -59,7 +59,7 @@ interface RunAgentOptions {
 
 export interface TaskStatus {
   taskId: string
-  state: "pending" | "running" | "completed" | "failed"
+  state: "pending" | "running" | "completed" | "failed" | "cancelled"
   title?: string
   sessionLink?: string
   statusMessage?: string
@@ -77,8 +77,9 @@ function mapRunState(state: RunItem["state"]): TaskStatus["state"] {
       return "pending"
     case "SUCCEEDED":
       return "completed"
-    case "FAILED":
     case "CANCELLED":
+      return "cancelled"
+    case "FAILED":
       return "failed"
     default:
       return "pending"
@@ -166,7 +167,8 @@ export async function getTaskStatus(taskId: string, userId?: string | null): Pro
     if (!run) return { taskId, state: "pending" }
     const state =
       run.state === "SUCCEEDED" ? "completed"
-      : run.state === "FAILED" || run.state === "CANCELLED" ? "failed"
+      : run.state === "CANCELLED" ? "cancelled"
+      : run.state === "FAILED" ? "failed"
       : run.state === "INPROGRESS" ? "running"
       : "pending"
     return {
@@ -192,7 +194,7 @@ export async function pollForCompletion(
     const { maxAttempts = 60, intervalMs = 1000 } = options
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const status = await getTaskStatus(taskId)
-      if (status.state === "completed" || status.state === "failed") return status
+      if (status.state === "completed" || status.state === "failed" || status.state === "cancelled") return status
       const jitter = intervalMs * (0.8 + Math.random() * 0.4)
       await new Promise((resolve) => setTimeout(resolve, jitter))
     }
@@ -209,7 +211,7 @@ export async function pollForCompletion(
     const data = await client.agent.runs.retrieve(taskId)
     const status = mapRunItemToTaskStatus(data)
 
-    if (status.state === "completed" || status.state === "failed") {
+    if (status.state === "completed" || status.state === "failed" || status.state === "cancelled") {
       return status
     }
 

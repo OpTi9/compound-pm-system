@@ -259,12 +259,13 @@ To mention an agent, include @agent-name in your response message.
 
     eventBroadcaster.broadcast({ type: "room", roomId, data: null })
 
-    if (result.state === "failed") {
+    if (result.state === "failed" || result.state === "cancelled") {
+      const cancelled = result.state === "cancelled"
       const errorMessage = await prisma.message.upsert({
         where: { id: invocationId },
         create: {
           id: invocationId,
-          content: `Error: Agent task failed`,
+          content: cancelled ? "Cancelled." : `Error: Agent task failed`,
           authorType: "agent",
           sessionUrl: result.sessionLink,
           userId,
@@ -289,7 +290,7 @@ To mention an agent, include @agent-name in your response message.
       return {
         success: false,
         message: { ...errorMessage, author: errorMessage.agent, agent: undefined },
-        error: "Agent task failed",
+        error: cancelled ? "Cancelled" : "Agent task failed",
       }
     }
 

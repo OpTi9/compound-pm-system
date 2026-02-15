@@ -163,9 +163,21 @@ async function bumpUsage(providerKey: string, windowSeconds: number, messagesLim
   })
 }
 
-async function markSaturated(providerKey: string): Promise<void> {
+async function markSaturated(providerKey: string, windowSeconds?: number, messagesLimit?: number): Promise<void> {
   const row = await prisma.providerUsage.findUnique({ where: { providerKey } })
-  if (!row) return
+  if (!row) {
+    if (!windowSeconds || !messagesLimit || windowSeconds <= 0 || messagesLimit <= 0) return
+    await prisma.providerUsage.create({
+      data: {
+        providerKey,
+        windowStartedAt: new Date(),
+        windowSeconds,
+        messagesUsed: messagesLimit,
+        messagesLimit,
+      },
+    })
+    return
+  }
   await prisma.providerUsage.update({
     where: { providerKey },
     data: { messagesUsed: row.messagesLimit },
@@ -261,10 +273,10 @@ export async function recordProviderCallStart(candidate: ProviderCandidate): Pro
 
 export async function handleProviderError(candidate: ProviderCandidate, err: unknown): Promise<void> {
   if (isRateLimitError(err)) {
-    await markSaturated(candidate.providerKey)
+    await markSaturated(candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
     return
   }
   if (err instanceof ProviderError && err.status === 429) {
-    await markSaturated(candidate.providerKey)
+    await markSaturated(candidate.providerKey, candidate.windowSeconds, candidate.messagesLimit)
   }
 }

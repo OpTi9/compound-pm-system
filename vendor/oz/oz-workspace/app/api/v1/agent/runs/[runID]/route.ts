@@ -8,12 +8,15 @@ function mapState(state: string): string {
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ runID: string }> }) {
-  const auth = requireOzApiAuth(request)
-  if (auth) return auth
+  const auth = await requireOzApiAuth(request)
+  if (!auth.ok) return auth.response
 
   const { runID } = await params
   const run = await prisma.agentRun.findUnique({ where: { id: runID } })
   if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 })
+  if (!auth.ctx.isAdmin && run.userId !== auth.ctx.userId) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 })
+  }
 
   return NextResponse.json({
     created_at: run.queuedAt.toISOString(),
@@ -35,4 +38,3 @@ export async function GET(request: Request, { params }: { params: Promise<{ runI
     source: "LOCAL",
   })
 }
-
