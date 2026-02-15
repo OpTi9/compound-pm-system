@@ -9,6 +9,14 @@ This repo vendors a complete, self-hostable Oz stack under `vendor/oz/` with no 
 - `vendor/oz/oz-agent-worker`: Go worker that claims `PENDING` runs and executes them in Docker
 - `vendor/oz/oz-agent-sidecar`: sidecar filesystem mounted at `/agent` inside task containers, providing `/agent/entrypoint.sh`
 
+## Workspace Internal Auth (Agent Key)
+
+The workspace has internal endpoints that must not be reachable by untrusted clients.
+
+- Set `AGENT_API_KEY` in `vendor/oz/oz-workspace/.env.local`
+- Internal callers must send: `X-Agent-Key: $AGENT_API_KEY`
+- The workspace enforces this on `POST /api/agent-response` (agent callback ingestion) and other internal `/api/agent/*` routes.
+
 ## Execution Modes
 
 ### 1. Local Runner (Workspace Only)
@@ -131,6 +139,17 @@ Control plane supports:
   - `OZ_ADMIN_API_KEY` required unless `OZ_ALLOW_NO_ADMIN_KEY=true`
   - Optional provider validation with `OZ_STARTUP_VALIDATE_PROVIDERS=true` (and optional `OZ_VALIDATE_HARNESSES=...`)
 - Graceful shutdown on `SIGINT`/`SIGTERM` (closes worker WS, stops retention, drains HTTP server, disconnects Prisma).
-- Data retention for terminal runs:
+  - Data retention for terminal runs:
   - `OZ_RUN_RETENTION_DAYS` (default `30`, set `<=0` to disable)
   - `OZ_RETENTION_SWEEP_INTERVAL_MS` (default `3600000`)
+
+Additional knobs added in this repo:
+
+- Control plane CORS (optional): `OZ_CORS_ORIGIN=https://your-workspace.example`
+- Worker reconnect circuit breaker (optional):
+  - `OZ_RECONNECT_MAX_ATTEMPTS` (default `0` = unlimited)
+  - `OZ_RECONNECT_WINDOW_SECONDS` (default `0` = no windowing)
+- Workspace SSE event durability (optional): `OZ_REDIS_EVENTS_DURABLE=1`
+  - When enabled, key write routes await Redis `XADD` instead of fire-and-forget (still best-effort).
+- Workspace stale agent sweeper (optional): `OZ_STALE_AGENT_SWEEP_MS=300000`
+  - Resets agents stuck in `"running"` in a room if their `updatedAt` is older than the cutoff.

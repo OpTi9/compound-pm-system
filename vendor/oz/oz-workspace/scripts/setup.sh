@@ -91,8 +91,8 @@ if [ ! -f .env.local ]; then
   # --- Agent Callback URL ---
   echo ""
   echo "--- Agent Callback URL ---"
-  echo "Agents run in the cloud and need a public URL to send responses back."
-  echo "For local dev, use ngrok:  ngrok http 3000"
+  echo "Optional: only needed if you run an external harness that POSTs to /api/agent-response."
+  echo "For local dev, you can use ngrok:  ngrok http 3000"
   read -rp "Enter your callback URL (or press Enter to skip): " CALLBACK_URL_INPUT
   if [ -n "$CALLBACK_URL_INPUT" ]; then
     set_env_var "AGENT_CALLBACK_URL" "$CALLBACK_URL_INPUT"
@@ -118,7 +118,6 @@ echo "=== Setup complete! ==="
 MISSING=()
 grep -q '^OZ_API_KEY=$' .env.local 2>/dev/null && MISSING+=("OZ_API_KEY")
 grep -q '^OZ_ENVIRONMENT_ID=$' .env.local 2>/dev/null && MISSING+=("OZ_ENVIRONMENT_ID")
-grep -q '^AGENT_CALLBACK_URL=$' .env.local 2>/dev/null && MISSING+=("AGENT_CALLBACK_URL")
 
 if [ ${#MISSING[@]} -gt 0 ]; then
   echo ""

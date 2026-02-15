@@ -16,9 +16,11 @@ This repository vendors a self-hosted Oz-style agent platform under `vendor/oz/`
 
 ## Agent Internal API Key
 
-- `AGENT_API_KEY` authorizes internal agent automation endpoints (e.g. task CRUD).
+- `AGENT_API_KEY` authorizes internal agent automation endpoints and agent callbacks into the workspace.
   - File: `vendor/oz/oz-workspace/lib/agent-auth.ts`
   - Treat it like an admin credential. Do not expose it to untrusted clients or browsers.
+  - Header: `X-Agent-Key: $AGENT_API_KEY`
+  - Enforced on: `POST /api/agent-response` (and other internal `/api/agent/*` routes).
 
 ## Worker / Docker
 
@@ -29,4 +31,3 @@ This repository vendors a self-hosted Oz-style agent platform under `vendor/oz/`
 ## Cancellation Semantics
 
 - Local cancellations are best-effort. Cancelling a run updates DB state, but cannot always preempt an in-flight HTTP/CLI provider call.
-

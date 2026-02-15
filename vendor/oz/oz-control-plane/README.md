@@ -68,6 +68,7 @@ This is intended for localhost/private-network usage.
 2. Create `.env` from `.env.example` and set at least one provider (`OZ_PROVIDER_*`).
 3. Apply migrations:
    - `npm run prisma:migrate`
+4. Optional: set `OZ_CORS_ORIGIN` if the workspace is hosted on a different origin.
 4. Start:
    - `npm run dev`
 

@@ -40,6 +40,9 @@ OZ_API_KEY="change-me" ./oz-agent-worker --worker-id "my-worker"
 
 - `OZ_WS_URL` (default: `ws://localhost:8080/api/v1/selfhosted/worker/ws`)
 - `OZ_SERVER_ROOT_URL` (default: `http://localhost:8080`)
+- Optional reconnect circuit breaker:
+  - `OZ_RECONNECT_MAX_ATTEMPTS` (default `0` = unlimited)
+  - `OZ_RECONNECT_WINDOW_SECONDS` (default `0` = no windowing; when set, attempts are counted within the window)
 
 ## Docker Connectivity
 

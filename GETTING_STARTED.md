@@ -20,6 +20,7 @@ See `docs/OZ_STACK.md` for the full reference.
 2. `cp .env.example .env.local`
 3. Set at least:
    - `AUTH_SECRET` (generate with `openssl rand -base64 32`)
+   - `AGENT_API_KEY` (internal key for agent endpoints like `/api/agent-response`)
    - `OZ_RUNNER_MODE=local`
    - A provider (examples are in `.env.example`)
 4. Install + run:
@@ -50,6 +51,9 @@ npm run dev
 
 Note: `oz-control-plane` scopes runs by bearer token (tenant isolation is `sha256(token)`), unless the token equals `OZ_ADMIN_API_KEY`.
 
+Optional:
+- `OZ_CORS_ORIGIN` on `oz-control-plane` if your workspace is hosted on a different origin.
+
 ## Mode 3: Worker Execution (Docker Isolation)
 
 1. Build the sidecar image:
@@ -73,3 +77,6 @@ OZ_API_KEY="$OZ_ADMIN_API_KEY" ./oz-agent-worker --worker-id "worker-1"
 
 4. Create an environment via the control plane (`/api/v1/environments`) and pass its `environment_id` in `config.environment_id` when starting a run (workspace does this when an agent/environment is set).
 
+Optional worker resiliency:
+- `OZ_RECONNECT_MAX_ATTEMPTS` (default `0` = unlimited)
+- `OZ_RECONNECT_WINDOW_SECONDS` (default `0` = no windowing)

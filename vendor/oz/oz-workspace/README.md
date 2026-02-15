@@ -63,6 +63,9 @@ DATABASE_URL="file:./prisma/dev.db"
 # Auth (generate with: openssl rand -base64 32)
 AUTH_SECRET="<your-random-secret>"
 
+# Internal workspace agent key (required for internal endpoints like /api/agent-response)
+AGENT_API_KEY="<your-random-secret>"
+
 # Oz API Key — used to authenticate to your agent API
 OZ_API_KEY="<your-oz-api-key>"
 
@@ -77,9 +80,11 @@ OZ_RUNNER_MODE=local
 # Optional: default environment id for remote worker mode (an environment object from /api/v1/environments)
 OZ_ENVIRONMENT_ID="<your-environment-id>"
 
-# Agent callback URL — agents need a publicly accessible URL to POST responses
-# For local dev, use ngrok: ngrok http 3000, then paste the https URL here
-AGENT_CALLBACK_URL="<your-ngrok-or-public-url>"
+# Agent callback URL (optional / legacy)
+# The current Oz stack paths (local runner, control plane, worker) do not require the workspace to
+# receive direct callbacks. Leave unset unless you have an external harness that POSTs to
+# /api/agent-response.
+# AGENT_CALLBACK_URL="https://your-public-url"
 ```
 
 See `.env.example` for the full list of options.
