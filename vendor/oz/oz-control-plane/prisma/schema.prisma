@@ -1,0 +1,45 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AgentRun {
+  id           String   @id
+  ownerKeyHash String
+
+  title        String
+  prompt       String
+
+  harness      String
+  providerKey  String
+  providerType String
+  model        String
+  remoteRunId  String?
+
+  state        String   @default("QUEUED") // QUEUED|INPROGRESS|SUCCEEDED|FAILED|CANCELLED
+  output       String   @default("")
+  errorMessage String?
+
+  queuedAt     DateTime @default(now())
+  startedAt    DateTime?
+  completedAt  DateTime?
+  updatedAt    DateTime @updatedAt
+
+  @@index([ownerKeyHash])
+  @@index([state])
+  @@index([queuedAt])
+}
+
+model ProviderUsage {
+  providerKey     String   @id
+  windowStartedAt DateTime
+  windowSeconds   Int
+  messagesUsed    Int
+  messagesLimit   Int
+}
+

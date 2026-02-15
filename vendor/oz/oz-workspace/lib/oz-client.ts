@@ -40,6 +40,8 @@ function getOzClient(apiKey: string): OzAPI {
 interface RunAgentOptions {
   prompt: string
   environmentId?: string
+  /** Optional model_id to pass to the control plane (used for harness/provider routing). */
+  modelId?: string
   userId?: string | null
   /**
    * Stable id for this invocation. This is the value that is used as `task_id` when the agent
@@ -143,6 +145,7 @@ export async function runAgent(options: RunAgentOptions): Promise<string> {
 
   const config: OzAPI.AmbientAgentConfig = {}
   if (options.environmentId) config.environment_id = options.environmentId
+  if (options.modelId) (config as any).model_id = options.modelId
 
   const response = await client.agent.run({
     prompt: options.prompt,

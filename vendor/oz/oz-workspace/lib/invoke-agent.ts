@@ -85,9 +85,8 @@ export async function invokeAgent({
 
   const runnerMode = (process.env.OZ_RUNNER_MODE || "local").toLowerCase()
   const isRemoteRunner = runnerMode === "remote"
-  if (isRemoteRunner && agent.harness !== "oz") {
-    return { success: false, error: `Remote runner requires harness "oz" (got "${agent.harness}")`, errorStatus: 400 }
-  }
+  // Remote runner talks to an Oz-compatible control plane. It may support multiple harnesses
+  // (model_id routing), so we do not restrict the harness here.
 
   // Set agent to "running". For the initial call from /api/messages this is
   // already done before after() fires, but for recursive agent-to-agent
@@ -217,13 +216,11 @@ To mention an agent, include @agent-name in your response message.
     console.log("[invokeAgent] Prompt length:", fullPrompt.length)
 
     const environmentId = agent.environmentId || process.env.OZ_ENVIRONMENT_ID
-    if (isRemoteRunner && !environmentId) {
-      throw new Error("No environment ID configured. Configure it on the agent or set OZ_ENVIRONMENT_ID.")
-    }
 
     const taskId = await runAgent({
       prompt: fullPrompt,
       environmentId: isRemoteRunner ? environmentId : undefined,
+      modelId: isRemoteRunner ? agent.harness : undefined,
       userId,
       taskId: invocationId,
       roomId,
