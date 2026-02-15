@@ -1,3 +1,6 @@
+> Note: This SDK is vendored into a larger repo. If you're working inside this repository,
+> use `vendor/oz/oz-sdk-typescript` as the package root and ignore upstream publishing notes.
+
 ## Setting up the environment
 
 This repository uses [`pnpm`](https://pnpm.io/).
@@ -37,20 +40,11 @@ $ pnpm tsn -T examples/<your-example>.ts
 
 ## Using the repository from source
 
-If you’d like to use the repository from source, you can either install from git or link to a cloned repository:
-
-To install via git:
+If you’d like to use the SDK from source inside a local project, link it from a local checkout:
 
 ```sh
-$ npm install git+ssh://git@github.com:warpdotdev/oz-sdk-typescript.git
-```
-
-Alternatively, to link a local copy of the repo:
-
-```sh
-# Clone
-$ git clone https://www.github.com/warpdotdev/oz-sdk-typescript
-$ cd oz-sdk-typescript
+# From your project:
+$ cd vendor/oz/oz-sdk-typescript
 
 # With yarn
 $ yarn link
@@ -96,10 +90,6 @@ $ pnpm fix
 
 Changes made to this repository via the automated release PR pipeline should publish to npm automatically. If
 the changes aren't made through the automated pipeline, you may want to make releases manually.
-
-### Publish with a GitHub workflow
-
-You can release to package managers by using [the `Publish NPM` GitHub action](https://www.github.com/warpdotdev/oz-sdk-typescript/actions/workflows/publish-npm.yml). This requires a setup organization or repository secret to be set up.
 
 ### Publish manually
 

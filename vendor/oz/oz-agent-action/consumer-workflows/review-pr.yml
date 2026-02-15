@@ -29,7 +29,7 @@ on:
       - ready_for_review
 jobs:
   review_pr:
-    uses: warpdotdev/oz-agent-action/.github/workflows/review-pr.yml@v1
+    uses: ./.github/workflows/review-pr.yml@v1
     with:
       # These inputs are all optional
       profile: ''

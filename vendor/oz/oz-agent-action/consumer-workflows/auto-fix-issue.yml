@@ -28,7 +28,7 @@ on:
       - labeled
 jobs:
   auto_fix:
-    uses: warpdotdev/oz-agent-action/.github/workflows/auto-fix-issue.yml@v1
+    uses: ./.github/workflows/auto-fix-issue.yml@v1
     with:
       # These inputs are all optional
       profile: ''

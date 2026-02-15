@@ -191,7 +191,7 @@ function updateOzAgentActionInputs(job, workflowCallInputs) {
 
   for (const step of job.steps) {
     if (!step || typeof step.uses !== 'string') continue
-    if (!step.uses.startsWith('warpdotdev/oz-agent-action@')) continue
+    if (!step.uses.startsWith('./vendor/oz/oz-agent-action')) continue
 
     step.with ||= {}
 
@@ -217,7 +217,7 @@ function updateOzAgentActionInputs(job, workflowCallInputs) {
 
 function pinOzAgentVersionInText(yamlText, version) {
   if (!version) return yamlText
-  const pattern = /(uses:\s*warpdotdev\/oz-agent-action@)[^\s]+/g
+  const pattern = /(uses:\s*\.\/vendor\/oz\/oz-agent-action@)[^\s]+/g
   return yamlText.replace(pattern, `$1${version}`)
 }
 
@@ -331,8 +331,7 @@ async function generateConsumerTemplate(scenario, exampleYaml) {
   // Clone all jobs from the example
   const jobsClone = deepClone(exampleObj.jobs)
 
-  const usesRefVersion = scenario.consumerTemplate.pinOzAgentVersion || 'v1'
-  const usesRef = `warpdotdev/oz-agent-action/.github/workflows/${scenario.scenarioId}.yml@${usesRefVersion}`
+  const usesRef = `./.github/workflows/${scenario.scenarioId}.yml`
 
   const withBlock = {}
   if (scenario.reusableWorkflow?.inputs) {

@@ -18,7 +18,7 @@ jobs:
         with:
           oz_channel: preview
           prompt: Say hello
-          warp_api_key: ${{ secrets.WARP_API_KEY }}
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
 
       - name: Verify output
         env:
@@ -35,7 +35,7 @@ jobs:
         with:
           oz_channel: preview
           skill: 'test-skill'
-          warp_api_key: ${{ secrets.WARP_API_KEY }}
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
 
       - name: Verify skill output
         env:

@@ -12,7 +12,7 @@ on:
         type: string
         default: ''
       model:
-        description: Optional Warp model ID to use for Oz Agent.
+        description: Optional Oz model ID to use for Oz Agent.
         required: false
         type: string
         default: ''
@@ -29,7 +29,7 @@ on:
         type: string
         default: ''
     secrets:
-      WARP_API_KEY:
+      OZ_API_KEY:
         description: Oz API key used by the Oz Agent.
         required: true
 jobs:
@@ -131,17 +131,17 @@ jobs:
 
             core.setOutput('prompt', prompt);
       - name: Run Oz Agent
-        uses: warpdotdev/oz-agent-action@v1
+        uses: ./vendor/oz/oz-agent-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
         id: agent
         with:
           prompt: ${{ steps.prompt.outputs.prompt }}
-          warp_api_key: ${{ secrets.WARP_API_KEY }}
-          profile: ${{ inputs.profile || vars.WARP_AGENT_PROFILE || '' }}
-          model: ${{ inputs.model || vars.WARP_AGENT_MODEL || '' }}
-          name: ${{ inputs.name || vars.WARP_AGENT_NAME || '' }}
-          mcp: ${{ inputs.mcp || vars.WARP_AGENT_MCP || '' }}
+          oz_api_key: ${{ secrets.OZ_API_KEY }}
+          profile: ${{ inputs.profile || vars.OZ_AGENT_PROFILE || '' }}
+          model: ${{ inputs.model || vars.OZ_AGENT_MODEL || '' }}
+          name: ${{ inputs.name || vars.OZ_AGENT_NAME || '' }}
+          mcp: ${{ inputs.mcp || vars.OZ_AGENT_MCP || '' }}
       - name: Create Fix PR
         env:
           GH_TOKEN: ${{ github.token }}
@@ -172,7 +172,7 @@ jobs:
 
           FIX_BRANCH="oz-agent-fix/run-$RUN_ID"
           git config user.name "Oz Agent"
-          git config user.email "agent@warp.dev"
+          git config user.email "oz-agent"
 
           git checkout -b "$FIX_BRANCH"
           git add .

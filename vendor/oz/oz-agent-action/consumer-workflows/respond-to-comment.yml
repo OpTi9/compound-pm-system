@@ -30,7 +30,7 @@ on:
       - created
 jobs:
   respond:
-    uses: warpdotdev/oz-agent-action/.github/workflows/respond-to-comment.yml@v1
+    uses: ./.github/workflows/respond-to-comment.yml@v1
     with:
       # These inputs are all optional
       profile: ''

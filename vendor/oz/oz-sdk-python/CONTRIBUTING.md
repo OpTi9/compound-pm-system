@@ -1,3 +1,6 @@
+> Note: This SDK is vendored into a larger repo. If you're working inside this repository,
+> use `vendor/oz/oz-sdk-python` as the package root and ignore upstream publishing notes.
+
 ## Setting up the environment
 
 ### With `uv`
@@ -57,15 +60,7 @@ $ ./examples/<your-example>.py
 
 ## Using the repository from source
 
-If you’d like to use the repository from source, you can either install from git or link to a cloned repository:
-
-To install via git:
-
-```sh
-$ pip install git+ssh://git@github.com/warpdotdev/oz-sdk-python.git
-```
-
-Alternatively, you can build from source and install the wheel file:
+If you’d like to use the SDK from source, build from this vendored checkout and install the wheel:
 
 Building this package will create two files in the `dist/` directory, a `.tar.gz` containing the source files and a `.whl` that can be used to install the package efficiently.
 
@@ -117,10 +112,6 @@ $ ./scripts/format
 
 Changes made to this repository via the automated release PR pipeline should publish to PyPI automatically. If
 the changes aren't made through the automated pipeline, you may want to make releases manually.
-
-### Publish with a GitHub workflow
-
-You can release to package managers by using [the `Publish PyPI` GitHub action](https://www.github.com/warpdotdev/oz-sdk-python/actions/workflows/publish-pypi.yml). This requires a setup organization or repository secret to be set up.
 
 ### Publish manually
 

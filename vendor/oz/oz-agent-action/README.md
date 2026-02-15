@@ -13,11 +13,16 @@ Oz API Key. We recommend storing this
 key as a [secret](https://docs.github.com/en/actions/concepts/security/secrets) in your repository
 or organization.
 
+This action does not download any proprietary binaries by default. You must either:
+
+- Provide `oz_cli_path` (recommended), or
+- Provide an explicit `oz_cli_download_url` pointing at a `.deb` you host.
+
 Then, add a step to your workflow that runs Oz:
 
 ```yaml
 - name: Review code changes in Oz
-  uses: warpdotdev/oz-agent-action@v1
+  uses: ./vendor/oz/oz-agent-action
   with:
     prompt: |
       Review the code changes on this branch:
@@ -30,6 +35,9 @@ Then, add a step to your workflow that runs Oz:
     # mcp: |
     #   {"mcpServers": {"github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"], "env": {"GITHUB_TOKEN": "${{ secrets.GITHUB_TOKEN }}"}}}}
     oz_api_key: ${{ secrets.OZ_API_KEY }}
+    oz_cli_path: oz
+    # Or:
+    # oz_cli_download_url: https://your-hosted-artifacts.example.com/oz.deb
 ```
 
 ## Using Skills
@@ -41,10 +49,11 @@ You can use skills instead of or along with prompts:
 
 ```yaml
 - name: Run agent with a skill
-  uses: warpdotdev/oz-agent-action@v1
+  uses: ./vendor/oz/oz-agent-action
   with:
     skill: 'my-skill'
     oz_api_key: ${{ secrets.OZ_API_KEY }}
+    oz_cli_path: oz
 ```
 
 Skill format options:

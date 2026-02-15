@@ -29,7 +29,7 @@ on:
       - completed
 jobs:
   fix_failure:
-    uses: warpdotdev/oz-agent-action/.github/workflows/fix-failing-checks.yml@v1
+    uses: ./.github/workflows/fix-failing-checks.yml@v1
     with:
       # These inputs are all optional
       profile: ''

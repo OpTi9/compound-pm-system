@@ -31,7 +31,7 @@ class Variant(BaseModel):
     id: str
     """
     Stable identifier for this skill variant. Format: "{owner}/{repo}:{skill_path}"
-    Example: "warpdotdev/warp-server:.claude/skills/deploy/SKILL.md"
+    Example: "owner/repo:.claude/skills/deploy/SKILL.md"
     """
 
     base_prompt: str

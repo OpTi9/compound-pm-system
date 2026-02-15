@@ -43,9 +43,9 @@ print(response.run_id)
 You can configure the agent with a custom environment and other settings using the `config` parameter:
 
 ```python
-from warp_sdk import WarpAPI
+from oz_agent_sdk import OzAPI
 
-client = WarpAPI()
+client = OzAPI()
 
 response = client.agent.run(
     prompt="Fix the bug in auth.go",
@@ -323,9 +323,9 @@ agent = response.parse()  # get the object that `agent.run()` would have returne
 print(agent.run_id)
 ```
 
-These methods return an [`APIResponse`](https://github.com/warpdotdev/oz-sdk-python/tree/main/src/oz_agent_sdk/_response.py) object.
+These methods return an `APIResponse` object (see `src/oz_agent_sdk/_response.py`).
 
-The async client returns an [`AsyncAPIResponse`](https://github.com/warpdotdev/oz-sdk-python/tree/main/src/oz_agent_sdk/_response.py) with the same structure, the only difference being `await`able methods for reading the response content.
+The async client returns an `AsyncAPIResponse` with the same structure (see `src/oz_agent_sdk/_response.py`).
 
 #### `.with_streaming_response`
 
@@ -431,7 +431,7 @@ This package generally follows [SemVer](https://semver.org/spec/v2.0.0.html) con
 
 We take backwards-compatibility seriously and work hard to ensure you can rely on a smooth upgrade experience.
 
-We are keen for your feedback; please open an [issue](https://www.github.com/warpdotdev/oz-sdk-python/issues) with questions, bugs, or suggestions.
+This SDK is vendored into this repository. For issues/questions in this stack, track them in this repo.
 
 ### Determining the installed version
 

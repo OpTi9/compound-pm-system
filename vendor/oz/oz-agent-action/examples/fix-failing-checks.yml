@@ -128,7 +128,7 @@ jobs:
             core.setOutput('prompt', prompt);
 
       - name: Run Oz Agent
-        uses: warpdotdev/oz-agent-action@v1
+        uses: ./vendor/oz/oz-agent-action@v1
         env:
           GH_TOKEN: ${{ github.token }}
         id: agent

@@ -80,7 +80,7 @@ curl -sS -X POST http://localhost:8080/api/v1/environments \
   -H "Content-Type: application/json" \
   -d '{
     "name": "compound-pm",
-    "docker_image": "warpdotdev/dev-base:latest-agents",
+    "docker_image": "ubuntu:22.04",
     "repos": ["OpTi9/compound-pm-system"],
     "setup_commands": ["npm install"],
     "env_vars": {
@@ -106,4 +106,3 @@ In worker mode, the sidecar writes `/workspace/.oz/agent_output.txt`. The worker
   - GitHub PR URLs are returned as `PULL_REQUEST` artifacts in `artifacts`
 
 `GET /api/v1/agent/runs/:id` and `GET /api/v1/agent/runs` return `artifacts` and `session_link` fields.
-

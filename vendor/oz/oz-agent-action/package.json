@@ -10,10 +10,10 @@
   "author": "Oz Team",
   "license": "MIT",
   "description": "Run the Oz agent in a GitHub workflow",
-  "homepage": "https://github.com/warpdotdev/oz-agent-action#readme",
+  "homepage": "https://github.com/OpTi9/compound-pm-system#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/warpdotdev/oz-agent-action.git"
+    "url": "git+https://github.com/OpTi9/compound-pm-system.git"
   },
   "exports": {
     ".": "./dist/index.js"

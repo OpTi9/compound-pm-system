@@ -38,7 +38,7 @@ class AmbientAgentConfigParam(TypedDict, total=False):
     """
     Skill specification identifying which agent skill to use. Format:
     "{owner}/{repo}:{skill_path}" Example:
-    "warpdotdev/warp-server:.claude/skills/deploy/SKILL.md" Use the list agents
+    "owner/repo:.claude/skills/deploy/SKILL.md" Use the list agents
     endpoint to discover available skills.
     """
 
