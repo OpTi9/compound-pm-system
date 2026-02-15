@@ -10,6 +10,19 @@ Standalone control plane service that implements an Oz-compatible `/api/v1` for:
 It runs agent tasks locally using the same provider routing contract as `oz-workspace`
 (`OZ_PROVIDER_*`, fallback, quotas, queueing).
 
+## Self-Hosted Worker (oz-agent-worker)
+
+This control plane exposes a WebSocket compatible with `oz-agent-worker` at:
+
+- `ws://localhost:8080/api/v1/selfhosted/worker/ws?worker_id=...`
+
+When `config.environment_id` is provided to `POST /api/v1/agent/run`, the run is created in
+state `PENDING` and will be assigned to connected workers instead of running in-process.
+
+You must set:
+
+- `OZ_WORKER_SIDECAR_IMAGE` (see `vendor/oz/oz-agent-sidecar`)
+
 ## Auth Model
 
 Every request must include `Authorization: Bearer <token>`.
@@ -29,4 +42,3 @@ This is intended for localhost/private-network usage.
    - `npm run dev`
 
 Default base URL: `http://localhost:8080/api/v1`
-

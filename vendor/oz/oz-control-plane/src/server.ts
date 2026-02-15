@@ -6,6 +6,7 @@ import { prisma } from "./prisma.js"
 import { requireAuth } from "./auth.js"
 import { harnessFromModelId, json } from "./oz-api-shapes.js"
 import { runLocalAgent } from "./runner/local.js"
+import { attachWorkerWebSocket } from "./worker-ws.js"
 
 function readJson(req: http.IncomingMessage): Promise<any> {
   return new Promise((resolve, reject) => {
@@ -54,6 +55,7 @@ async function main() {
         if (typeof prompt !== "string" || !prompt.trim()) return json(res, 400, { error: "prompt is required" })
 
         const modelId = body?.config?.model_id ?? null
+        const environmentId = typeof body?.config?.environment_id === "string" ? body.config.environment_id.trim() : ""
         const harness = harnessFromModelId(modelId)
         const runId = `run_${crypto.randomUUID()}`
         const now = new Date()
@@ -61,15 +63,19 @@ async function main() {
         await prisma.agentRun.create({
           data: {
             id: runId,
-            ownerKeyHash: auth.isAdmin ? crypto.createHash("sha256").update("admin").digest("hex") : auth.ownerKeyHash,
+            ownerKeyHash: auth.isAdmin
+              ? crypto.createHash("sha256").update(auth.token).digest("hex")
+              : auth.ownerKeyHash,
             title: body?.config?.name || "API run",
             prompt,
+            environmentId: environmentId || null,
+            workerId: null,
             harness,
             providerKey: "pending",
             providerType: "pending",
             model: modelId || process.env.OZ_MODEL || process.env.OZ_PROVIDER_MODEL || "pending",
             remoteRunId: null,
-            state: "QUEUED",
+            state: environmentId ? "PENDING" : "QUEUED",
             queuedAt: now,
             startedAt: null,
             completedAt: null,
@@ -78,18 +84,20 @@ async function main() {
           },
         })
 
-        // Fire-and-forget execution.
-        setImmediate(async () => {
-          try {
-            await runLocalAgent({ runId, prompt, harness })
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err)
-            await prisma.agentRun.updateMany({
-              where: { id: runId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
-              data: { state: "FAILED", errorMessage: msg, completedAt: new Date() },
-            })
-          }
-        })
+        if (!environmentId) {
+          // Fire-and-forget execution (local mode).
+          setImmediate(async () => {
+            try {
+              await runLocalAgent({ runId, prompt, harness })
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err)
+              await prisma.agentRun.updateMany({
+                where: { id: runId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
+                data: { state: "FAILED", errorMessage: msg, completedAt: new Date() },
+              })
+            }
+          })
+        }
 
         return json(res, 200, { run_id: runId, task_id: runId })
       }
@@ -114,7 +122,7 @@ async function main() {
             agent_config: {
               model_id: run.model,
               name: run.title || undefined,
-              environment_id: null,
+              environment_id: run.environmentId || null,
             },
             source: "LOCAL",
             status_message: run.output
@@ -148,7 +156,7 @@ async function main() {
           agent_config: {
             model_id: run.model,
             name: run.title || undefined,
-            environment_id: null,
+            environment_id: run.environmentId || null,
           },
           source: "LOCAL",
           status_message: run.output
@@ -187,10 +195,11 @@ async function main() {
   server.listen(port, () => {
     console.log(`[oz-control-plane] listening on http://localhost:${port}`)
   })
+
+  attachWorkerWebSocket(server)
 }
 
 main().catch((e) => {
   console.error(e)
   process.exit(1)
 })
-

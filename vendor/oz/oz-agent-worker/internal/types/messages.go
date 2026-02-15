@@ -12,6 +12,7 @@ const (
 	MessageTypeTaskAssignment MessageType = "task_assignment"
 	MessageTypeTaskClaimed    MessageType = "task_claimed"
 	MessageTypeTaskFailed     MessageType = "task_failed"
+	MessageTypeTaskCompleted  MessageType = "task_completed"
 	MessageTypeHeartbeat      MessageType = "heartbeat"
 )
 
@@ -51,6 +52,15 @@ type TaskClaimedMessage struct {
 type TaskFailedMessage struct {
 	TaskID  string `json:"task_id"`
 	Message string `json:"message"`
+	Output  string `json:"output,omitempty"`
+}
+
+// TaskCompletedMessage is sent from worker to server when the task finishes (success or failure).
+type TaskCompletedMessage struct {
+	TaskID    string `json:"task_id"`
+	WorkerID  string `json:"worker_id"`
+	Output    string `json:"output,omitempty"`
+	ExitCode  int64  `json:"exit_code"`
 }
 
 type TaskDefinition struct {

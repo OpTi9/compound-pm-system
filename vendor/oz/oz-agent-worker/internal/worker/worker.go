@@ -348,15 +348,19 @@ func (w *Worker) executeTask(ctx context.Context, assignment *types.TaskAssignme
 	taskID := assignment.TaskID
 	log.Infof(ctx, "Starting task execution: taskID=%s, title=%s", taskID, assignment.Task.Title)
 
-	if err := w.executeTaskInDocker(ctx, assignment); err != nil {
-		log.Errorf(ctx, "Task launch failed: taskID=%s, error=%v", taskID, err)
-		if statusErr := w.sendTaskFailed(taskID, fmt.Sprintf("Failed to launch task: %v", err)); statusErr != nil {
+	output, err := w.executeTaskInDocker(ctx, assignment)
+	if err != nil {
+		log.Errorf(ctx, "Task failed: taskID=%s, error=%v", taskID, err)
+		if statusErr := w.sendTaskFailed(taskID, fmt.Sprintf("Task failed: %v", err), output); statusErr != nil {
 			log.Errorf(ctx, "Failed to send task failed message: %v", statusErr)
 		}
 		return
 	}
 
-	log.Infof(ctx, "Task container started successfully: taskID=%s", taskID)
+	if statusErr := w.sendTaskCompleted(taskID, output, 0); statusErr != nil {
+		log.Errorf(ctx, "Failed to send task completed message: %v", statusErr)
+	}
+	log.Infof(ctx, "Task completed successfully: taskID=%s", taskID)
 }
 
 // pullImage pulls a Docker image. If authStr is non-empty, it will be used for registry authentication.
@@ -425,7 +429,7 @@ func (w *Worker) getRegistryAuth(ctx context.Context, imageName string) string {
 	return base64.URLEncoding.EncodeToString(authJSON)
 }
 
-func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.TaskAssignmentMessage) error {
+func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.TaskAssignmentMessage) (string, error) {
 	task := assignment.Task
 	dockerClient := w.dockerClient
 
@@ -445,22 +449,22 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 
 	authStr := w.getRegistryAuth(ctx, imageName)
 	if err := w.pullImage(ctx, imageName, authStr); err != nil {
-		return err
+		return "", err
 	}
 
 	if assignment.SidecarImage == "" {
-		return fmt.Errorf("no sidecar image specified in assignment")
+		return "", fmt.Errorf("no sidecar image specified in assignment")
 	}
 
 	// Sidecar images are public, so no auth is needed
 	if err := w.pullImage(ctx, assignment.SidecarImage, ""); err != nil {
-		return err
+		return "", err
 	}
 
 	// Get the concrete image digest to ensure volume is rebuilt when the image changes
 	sidecarDigest, err := w.getImageDigest(ctx, assignment.SidecarImage)
 	if err != nil {
-		return fmt.Errorf("failed to get sidecar image digest: %w", err)
+		return "", fmt.Errorf("failed to get sidecar image digest: %w", err)
 	}
 
 	volumeName := sanitizeVolumeName(assignment.SidecarImage, sidecarDigest)
@@ -489,7 +493,7 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 	// Prepare additional sidecar volumes (e.g., xvfb for computer use).
 	additionalSidecarBinds, err := w.prepareAdditionalSidecars(ctx, dockerClient, assignment.AdditionalSidecars)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	envVars := []string{
@@ -541,7 +545,7 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 
 	resp, err := dockerClient.ContainerCreate(ctx, containerConfig, hostConfig, nil, nil, "")
 	if err != nil {
-		return fmt.Errorf("failed to create container: %w", err)
+		return "", fmt.Errorf("failed to create container: %w", err)
 	}
 
 	containerID := resp.ID
@@ -556,21 +560,25 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 	}()
 
 	if err := dockerClient.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
-		return fmt.Errorf("failed to start container: %w", err)
+		return "", fmt.Errorf("failed to start container: %w", err)
 	}
 
 	log.Debugf(ctx, "Started Docker container: %s", containerID)
 
 	statusCh, errCh := dockerClient.ContainerWait(ctx, containerID, container.WaitConditionNotRunning)
+	var exitCode int64 = -1
+	var logOutput string
 	select {
 	case err := <-errCh:
 		if err != nil {
-			return fmt.Errorf("error waiting for container: %w", err)
+			return "", fmt.Errorf("error waiting for container: %w", err)
 		}
 	case status := <-statusCh:
 		log.Debugf(ctx, "Container exited with status code: %d", status.StatusCode)
+		exitCode = status.StatusCode
 
-		logOutput, logErr := w.getContainerLogs(ctx, dockerClient, containerID)
+		var logErr error
+		logOutput, logErr = w.getContainerLogs(ctx, dockerClient, containerID)
 		if zerolog.GlobalLevel() <= zerolog.DebugLevel || status.StatusCode != 0 {
 			if logErr != nil {
 				log.Warnf(ctx, "Failed to get container logs: %v", logErr)
@@ -584,12 +592,18 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 		}
 
 		if status.StatusCode != 0 {
-			return fmt.Errorf("container exited with non-zero status: %d", status.StatusCode)
+			// Preserve logs for reporting to the control plane.
+			if logErr != nil {
+				return "", fmt.Errorf("container exited with non-zero status: %d (failed to read logs: %v)", status.StatusCode, logErr)
+			}
+			return logOutput, fmt.Errorf("container exited with non-zero status: %d", status.StatusCode)
 		}
 	}
 
-	log.Infof(ctx, "Task %s execution completed successfully", task.ID)
-	return nil
+	if exitCode == 0 {
+		return logOutput, nil
+	}
+	return logOutput, nil
 }
 
 func (w *Worker) getContainerLogs(ctx context.Context, dockerClient *client.Client, containerID string) (string, error) {
@@ -809,10 +823,11 @@ func (w *Worker) sendTaskClaimed(taskID string) error {
 	return w.sendMessage(msgBytes)
 }
 
-func (w *Worker) sendTaskFailed(taskID, message string) error {
+func (w *Worker) sendTaskFailed(taskID, message, output string) error {
 	failedMsg := types.TaskFailedMessage{
 		TaskID:  taskID,
 		Message: message,
+		Output:  output,
 	}
 
 	data, err := json.Marshal(failedMsg)
@@ -822,6 +837,32 @@ func (w *Worker) sendTaskFailed(taskID, message string) error {
 
 	msg := types.WebSocketMessage{
 		Type: types.MessageTypeTaskFailed,
+		Data: data,
+	}
+
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal websocket message: %w", err)
+	}
+
+	return w.sendMessage(msgBytes)
+}
+
+func (w *Worker) sendTaskCompleted(taskID, output string, exitCode int64) error {
+	completed := types.TaskCompletedMessage{
+		TaskID:   taskID,
+		WorkerID: w.config.WorkerID,
+		Output:   output,
+		ExitCode: exitCode,
+	}
+
+	data, err := json.Marshal(completed)
+	if err != nil {
+		return fmt.Errorf("failed to marshal task completed message: %w", err)
+	}
+
+	msg := types.WebSocketMessage{
+		Type: types.MessageTypeTaskCompleted,
 		Data: data,
 	}
 
