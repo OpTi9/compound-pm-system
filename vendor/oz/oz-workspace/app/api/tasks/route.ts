@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUserId, AuthError, unauthorizedResponse } from "@/lib/auth-helper"
-import { eventBroadcaster } from "@/lib/event-broadcaster"
+import { eventBroadcaster, type BroadcastEvent } from "@/lib/event-broadcaster"
 import { normalizeTaskPriority, normalizeTaskStatus } from "@/lib/validation"
 
 const AGENT_SELECT = {
@@ -11,6 +11,14 @@ const AGENT_SELECT = {
   icon: true,
   status: true,
   activeRoomId: true,
+}
+
+async function broadcastEvent(event: BroadcastEvent): Promise<void> {
+  if ((process.env.OZ_REDIS_EVENTS_DURABLE || "").trim() === "1") {
+    await eventBroadcaster.broadcastAsync(event)
+    return
+  }
+  eventBroadcaster.broadcast(event)
 }
 
 export async function GET(request: Request) {
@@ -83,7 +91,7 @@ export async function POST(request: Request) {
     })
 
     // Broadcast new task to SSE subscribers
-    eventBroadcaster.broadcast({
+    await broadcastEvent({
       type: "task",
       roomId,
       data: { action: "created", task },

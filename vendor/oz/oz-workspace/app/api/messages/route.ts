@@ -1,12 +1,20 @@
 import { NextResponse, after } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUserId, AuthError, unauthorizedResponse } from "@/lib/auth-helper"
-import { eventBroadcaster } from "@/lib/event-broadcaster"
+import { eventBroadcaster, type BroadcastEvent } from "@/lib/event-broadcaster"
 import { invokeAgent } from "@/lib/invoke-agent"
 import { extractMentionedNames } from "@/lib/mentions"
 
 // Allow enough time for agent invocations triggered by @mentions
 export const maxDuration = 300
+
+async function broadcastEvent(event: BroadcastEvent): Promise<void> {
+  if ((process.env.OZ_REDIS_EVENTS_DURABLE || "").trim() === "1") {
+    await eventBroadcaster.broadcastAsync(event)
+    return
+  }
+  eventBroadcaster.broadcast(event)
+}
 
 export async function GET(request: Request) {
   try {
@@ -131,7 +139,7 @@ export async function POST(request: Request) {
     })
 
     // Broadcast new message to SSE subscribers
-    eventBroadcaster.broadcast({
+    await broadcastEvent({
       type: "message",
       roomId,
       data: {
@@ -170,7 +178,7 @@ export async function POST(request: Request) {
 
         // Broadcast the room update so SSE subscribers also see it
         if (ozAgents.length > 0) {
-          eventBroadcaster.broadcast({ type: "room", roomId, data: null })
+          await broadcastEvent({ type: "room", roomId, data: null })
         }
         // Dispatch the actual agent work in after() so the response returns fast.
         // Use a single after() task so multiple mentioned agents can be invoked reliably.

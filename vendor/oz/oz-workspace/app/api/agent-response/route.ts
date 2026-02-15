@@ -30,6 +30,14 @@ function trimForPrompt(text: string, maxChars: number) {
   return `${text.slice(0, maxChars)}\n\n[truncated ${text.length - maxChars} chars]`
 }
 
+async function broadcastEvent(event: Parameters<typeof eventBroadcaster.broadcast>[0]): Promise<void> {
+  if ((process.env.OZ_REDIS_EVENTS_DURABLE || "").trim() === "1") {
+    await eventBroadcaster.broadcastAsync(event)
+    return
+  }
+  eventBroadcaster.broadcast(event)
+}
+
 // POST - Agent sends its response here
 export async function POST(request: Request) {
   const authError = validateAgentApiKey(request)
@@ -92,12 +100,12 @@ export async function POST(request: Request) {
         data: { status: "idle", activeRoomId: null },
       })
 
-      eventBroadcaster.broadcast({
+      await broadcastEvent({
         type: "message",
         roomId,
         data: { ...message, author: message.agent, agent: undefined },
       })
-      eventBroadcaster.broadcast({ type: "room", roomId, data: null })
+      await broadcastEvent({ type: "room", roomId, data: null })
 
       // Best-effort: persist artifacts produced by the run. We can't rely on the original
       // invoker surviving long enough to poll to completion on Vercel.
@@ -344,7 +352,7 @@ export async function POST(request: Request) {
                 where: { id: { in: dispatchable.map((d) => d.agent.id) } },
                 data: { status: "running", activeRoomId: roomId },
               })
-              eventBroadcaster.broadcast({ type: "room", roomId, data: null })
+              await broadcastEvent({ type: "room", roomId, data: null })
             }
 
             for (const { agent: mentionedAgent, invocationId } of dispatchable) {

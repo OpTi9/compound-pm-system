@@ -45,6 +45,8 @@ This repo vendors a runnable Oz stack under `vendor/oz/` and treats the rest of 
 - `vendor/oz/oz-workspace/lib/event-broadcaster.ts` is best-effort.
   - It retries Redis `XADD` a few times, but callers should assume events can still be dropped.
   - Treat events as UI refresh hints, not a durability mechanism.
+  - For serverless (Vercel) reliability, you can opt into awaiting persistence:
+    - Set `OZ_REDIS_EVENTS_DURABLE=1` to make key routes await `XADD` instead of fire-and-forget.
 
 ## Prisma Migrations (SQLite)
 

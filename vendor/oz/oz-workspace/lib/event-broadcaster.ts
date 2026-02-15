@@ -28,7 +28,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-async function xaddWithRetry(event: BroadcastEvent): Promise<void> {
+async function xaddWithRetry(event: BroadcastEvent): Promise<string | null> {
   if (!redis) return
 
   let payload: { type: string; data: string }
@@ -41,17 +41,17 @@ async function xaddWithRetry(event: BroadcastEvent): Promise<void> {
 
   for (let attempt = 1; attempt <= REDIS_XADD_MAX_ATTEMPTS; attempt++) {
     try {
-      await redis.xadd(
+      const id = await redis.xadd(
         streamKey(event.roomId),
         "*",
         payload,
         { trim: { type: "MAXLEN", threshold: STREAM_MAXLEN, comparison: "~" as const } },
       )
-      return
+      return id
     } catch (err) {
       if (attempt === REDIS_XADD_MAX_ATTEMPTS) {
         console.error("[event-broadcaster] Redis XADD failed (giving up):", err)
-        return
+        return null
       }
       const jitter = Math.floor(Math.random() * 30)
       const backoff = Math.min(REDIS_XADD_RETRY_BASE_MS * (2 ** (attempt - 1)) + jitter, 5_000)
@@ -59,6 +59,8 @@ async function xaddWithRetry(event: BroadcastEvent): Promise<void> {
       await sleep(backoff)
     }
   }
+
+  return null
 }
 
 // ─── Raw Upstash REST API calls (bypass SDK for reads) ─────
@@ -167,6 +169,17 @@ export const eventBroadcaster = {
       // Best-effort persistence; retries reduce transient drop risk without forcing callers async.
       void xaddWithRetry(event)
     }
+  },
+
+  /**
+   * Write an event and await Redis persistence (when configured).
+   * Use this for flows that rely on cross-instance delivery ordering.
+   *
+   * Returns the Redis Stream entry id when Redis is configured, otherwise null.
+   */
+  async broadcastAsync(event: BroadcastEvent): Promise<string | null> {
+    inMemoryBroadcaster.broadcast(event)
+    return await xaddWithRetry(event)
   },
 
   /** Subscribe to in-memory events (local dev only). */
