@@ -9,7 +9,13 @@ import { extractMentionedNames } from "@/lib/mentions"
 export const maxDuration = 300
 
 async function broadcastEvent(event: BroadcastEvent): Promise<void> {
-  if ((process.env.OZ_REDIS_EVENTS_DURABLE || "").trim() === "1") {
+  const strict = (process.env.OZ_REDIS_EVENTS_STRICT || "").trim() === "1"
+  const durable = strict || (process.env.OZ_REDIS_EVENTS_DURABLE || "").trim() === "1"
+  if (strict) {
+    await eventBroadcaster.broadcastStrictAsync(event)
+    return
+  }
+  if (durable) {
     await eventBroadcaster.broadcastAsync(event)
     return
   }

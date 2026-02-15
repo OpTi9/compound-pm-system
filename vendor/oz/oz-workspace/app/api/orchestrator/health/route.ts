@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getAuthenticatedUserId, AuthError, unauthorizedResponse } from "@/lib/auth-helper"
+import { eventBroadcaster } from "@/lib/event-broadcaster"
 
 export const maxDuration = 60
 
@@ -57,6 +58,7 @@ export async function GET(request: Request) {
         last_tick_at: lastTickAt ? lastTickAt.toISOString() : null,
         age_ms: lastTickAgeMs,
       },
+      events: eventBroadcaster.getStats(),
       queue: {
         by_status: byStatus,
         oldest_queued_age_ms: oldestQueuedAgeMs,
@@ -72,4 +74,3 @@ export async function GET(request: Request) {
     )
   }
 }
-

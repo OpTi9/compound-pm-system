@@ -151,5 +151,7 @@ Additional knobs added in this repo:
   - `OZ_RECONNECT_WINDOW_SECONDS` (default `0` = no windowing)
 - Workspace SSE event durability (optional): `OZ_REDIS_EVENTS_DURABLE=1`
   - When enabled, key write routes await Redis `XADD` instead of fire-and-forget (still best-effort).
+- Workspace SSE event strictness (optional): `OZ_REDIS_EVENTS_STRICT=1`
+  - When enabled and Redis is configured, key write routes throw if Redis `XADD` cannot be persisted.
 - Workspace stale agent sweeper (optional): `OZ_STALE_AGENT_SWEEP_MS=300000`
   - Resets agents stuck in `"running"` in a room if their `updatedAt` is older than the cutoff.

@@ -24,19 +24,36 @@ function streamKey(roomId: string) {
   return `room:${roomId}:events`
 }
 
+type RedisPublishStats = {
+  ok: number
+  fail: number
+  last_error_at: string | null
+  last_error: string | null
+}
+
+const globalForStats = globalThis as unknown as { ozRedisPublishStats?: RedisPublishStats }
+const redisPublishStats: RedisPublishStats =
+  globalForStats.ozRedisPublishStats || { ok: 0, fail: 0, last_error_at: null, last_error: null }
+if (process.env.NODE_ENV !== "production") {
+  globalForStats.ozRedisPublishStats = redisPublishStats
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 async function xaddWithRetry(event: BroadcastEvent): Promise<string | null> {
-  if (!redis) return
+  if (!redis) return null
 
   let payload: { type: string; data: string }
   try {
     payload = { type: event.type, data: JSON.stringify(event.data) }
   } catch (err) {
     console.error("[event-broadcaster] Failed to serialize event data:", err)
-    return
+    redisPublishStats.fail++
+    redisPublishStats.last_error_at = new Date().toISOString()
+    redisPublishStats.last_error = err instanceof Error ? err.message : String(err)
+    return null
   }
 
   for (let attempt = 1; attempt <= REDIS_XADD_MAX_ATTEMPTS; attempt++) {
@@ -47,10 +64,14 @@ async function xaddWithRetry(event: BroadcastEvent): Promise<string | null> {
         payload,
         { trim: { type: "MAXLEN", threshold: STREAM_MAXLEN, comparison: "~" as const } },
       )
+      redisPublishStats.ok++
       return id
     } catch (err) {
       if (attempt === REDIS_XADD_MAX_ATTEMPTS) {
         console.error("[event-broadcaster] Redis XADD failed (giving up):", err)
+        redisPublishStats.fail++
+        redisPublishStats.last_error_at = new Date().toISOString()
+        redisPublishStats.last_error = err instanceof Error ? err.message : String(err)
         return null
       }
       const jitter = Math.floor(Math.random() * 30)
@@ -182,6 +203,18 @@ export const eventBroadcaster = {
     return await xaddWithRetry(event)
   },
 
+  /**
+   * Write an event and enforce Redis persistence when Redis is configured.
+   * Throws when Redis is configured but the event could not be persisted.
+   */
+  async broadcastStrictAsync(event: BroadcastEvent): Promise<string | null> {
+    inMemoryBroadcaster.broadcast(event)
+    if (!redis) return null
+    const id = await xaddWithRetry(event)
+    if (!id) throw new Error("Redis XADD failed")
+    return id
+  },
+
   /** Subscribe to in-memory events (local dev only). */
   subscribe(roomId: string, callback: Subscriber): () => void {
     return inMemoryBroadcaster.subscribe(roomId, callback)
@@ -250,5 +283,13 @@ export const eventBroadcaster = {
   /** Whether Redis-backed streaming is available. */
   get hasRedis(): boolean {
     return redis !== null
+  },
+
+  /** Basic publish stats (best-effort; in-memory). */
+  getStats(): { hasRedis: boolean; redis_xadd: RedisPublishStats } {
+    return {
+      hasRedis: redis !== null,
+      redis_xadd: { ...redisPublishStats },
+    }
   },
 }

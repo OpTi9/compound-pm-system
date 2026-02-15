@@ -47,6 +47,7 @@ This repo vendors a runnable Oz stack under `vendor/oz/` and treats the rest of 
   - Treat events as UI refresh hints, not a durability mechanism.
   - For serverless (Vercel) reliability, you can opt into awaiting persistence:
     - Set `OZ_REDIS_EVENTS_DURABLE=1` to make key routes await `XADD` instead of fire-and-forget.
+    - Set `OZ_REDIS_EVENTS_STRICT=1` to fail the request when Redis is configured but `XADD` cannot be persisted.
 
 ## Prisma Migrations (SQLite)
 
