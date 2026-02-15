@@ -14,10 +14,19 @@ function buildDecomposePrompt(prd: { title: string; content: string }) {
     "You are Avery (architect). Decompose the PRD into implementation tasks.",
     "",
     "OUTPUT FORMAT (mandatory): return a single JSON object. Prefer a ```json code fence```.",
-    "Schema:",
+    "Choose ONE of these schemas:",
+    "",
+    "Schema A (flat tasks):",
     "{",
-    '  "tasks": [',
-    '    { "title": "...", "prompt": "...", "agentId": "optional-override" }',
+    '  \"tasks\": [',
+    '    { \"title\": \"...\", \"prompt\": \"...\", \"agentId\": \"optional-override\" }',
+    "  ]",
+    "}",
+    "",
+    "Schema B (epics -> tasks):",
+    "{",
+    '  \"epics\": [',
+    '    { \"title\": \"...\", \"tasks\": [ { \"title\": \"...\", \"prompt\": \"...\", \"agentId\": \"optional-override\" } ] }',
     "  ]",
     "}",
     "",
@@ -25,6 +34,7 @@ function buildDecomposePrompt(prd: { title: string; content: string }) {
     "- Produce tasks that are independently executable and reviewable.",
     "- Include acceptance criteria and test guidance in each task prompt.",
     "- Keep prompts concise and specific.",
+    "- Use epics when the PRD is large; otherwise flat tasks is fine.",
     "",
     `PRD Title: ${prd.title}`,
     "",
@@ -145,4 +155,3 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     )
   }
 }
-

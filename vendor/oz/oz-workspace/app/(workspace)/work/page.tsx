@@ -48,6 +48,7 @@ type WorkItem = {
   maxIterations: number
   roomId: string | null
   agentId: string | null
+  epicId?: string | null
   runId: string | null
   attempts: number
   maxAttempts: number
@@ -58,6 +59,7 @@ type WorkItem = {
   updatedAt: string
   room?: { id: string; name: string } | null
   agent?: { id: string; name: string; color: string; icon: string } | null
+  epic?: { id: string; title: string; order: number; status: string; prdId: string } | null
 }
 
 type KnowledgeItem = {
@@ -394,6 +396,27 @@ export default function WorkPage() {
     }
   }
 
+  const groupedWork = React.useMemo(() => {
+    const groups = new Map<string, { key: string; title: string; order: number; items: WorkItem[] }>()
+    for (const w of workItems) {
+      const key = (w.epicId || "").trim() || "__ungrouped__"
+      const epicTitle = (w.epic?.title || "").trim()
+      const title = epicTitle || (key === "__ungrouped__" ? "Ungrouped" : "Epic")
+      const order = key === "__ungrouped__" ? Number.MAX_SAFE_INTEGER : (typeof w.epic?.order === "number" ? w.epic.order : 0)
+
+      const g = groups.get(key) || { key, title, order, items: [] }
+      g.items.push(w)
+      // If we first saw an item without epic populated but later have it, prefer the richer data.
+      if (key !== "__ungrouped__" && epicTitle && g.title !== epicTitle) g.title = epicTitle
+      if (key !== "__ungrouped__" && typeof w.epic?.order === "number") g.order = w.epic.order
+      groups.set(key, g)
+    }
+
+    const out = Array.from(groups.values())
+    out.sort((a, b) => a.order - b.order || a.title.localeCompare(b.title) || a.key.localeCompare(b.key))
+    return out
+  }, [workItems])
+
   return (
     <div className="flex h-full flex-col">
       <header className="flex h-12 items-center justify-between gap-2 border-b px-4">
@@ -564,50 +587,60 @@ export default function WorkPage() {
                       {workItems.length === 0 ? (
                         <div className="text-xs text-muted-foreground">No work items yet for this PRD.</div>
                       ) : (
-                        <div className="space-y-2">
-                          {workItems.map((w) => (
-                            <div key={w.id} className="rounded-md border p-3">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs font-medium">{w.type}</span>
-                                    <Badge variant={badgeVariantForStatus(w.status)}>{w.status}</Badge>
-                                    {w.type === "task" || w.type === "review" ? (
-                                      <span className="text-[0.625rem] text-muted-foreground">
-                                        iter {w.iteration}/{w.maxIterations}
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <div className="mt-1 text-[0.625rem] text-muted-foreground">
-                                    {w.agent?.name ? `Agent: ${w.agent.name}` : (w.agentId ? `Agent: ${w.agentId}` : "Agent: -")}
-                                    {" · "}
-                                    Created {fmtShort(w.createdAt)}
-                                    {w.runId ? ` · run ${w.runId}` : ""}
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  {["FAILED", "CANCELLED"].includes(w.status) && (
-                                    <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => requeueItem(w.id)}>
-                                      Requeue
-                                    </Button>
-                                  )}
-                                  {["QUEUED", "CLAIMED", "RUNNING"].includes(w.status) && (
-                                    <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={busy} onClick={() => cancelItem(w.id)}>
-                                      Cancel
-                                    </Button>
-                                  )}
-                                </div>
+                        <div className="space-y-4">
+                          {groupedWork.map((g) => (
+                            <div key={g.key}>
+                              <div className="mb-2 flex items-center justify-between gap-2">
+                                <div className="text-xs font-medium">{g.key === "__ungrouped__" ? "Ungrouped" : `Epic: ${g.title}`}</div>
+                                <div className="text-[0.625rem] text-muted-foreground">{g.items.length} item(s)</div>
                               </div>
-                              {w.lastError && (
-                                <div className="mt-2 rounded-md bg-destructive/5 p-2 text-[0.6875rem] text-destructive">
-                                  {firstLine(w.lastError)}
-                                </div>
-                              )}
-                              {w.leaseExpiresAt && ["CLAIMED", "RUNNING"].includes(w.status) && (
-                                <div className="mt-2 text-[0.625rem] text-muted-foreground">
-                                  Lease expires {fmtShort(w.leaseExpiresAt)}
-                                </div>
-                              )}
+                              <div className="space-y-2">
+                                {g.items.map((w) => (
+                                  <div key={w.id} className="rounded-md border p-3">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="min-w-0">
+                                        <div className="flex items-center gap-2">
+                                          <span className="text-xs font-medium">{w.type}</span>
+                                          <Badge variant={badgeVariantForStatus(w.status)}>{w.status}</Badge>
+                                          {w.type === "task" || w.type === "review" ? (
+                                            <span className="text-[0.625rem] text-muted-foreground">
+                                              iter {w.iteration}/{w.maxIterations}
+                                            </span>
+                                          ) : null}
+                                        </div>
+                                        <div className="mt-1 text-[0.625rem] text-muted-foreground">
+                                          {w.agent?.name ? `Agent: ${w.agent.name}` : (w.agentId ? `Agent: ${w.agentId}` : "Agent: -")}
+                                          {" · "}
+                                          Created {fmtShort(w.createdAt)}
+                                          {w.runId ? ` · run ${w.runId}` : ""}
+                                        </div>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                        {["FAILED", "CANCELLED"].includes(w.status) && (
+                                          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => requeueItem(w.id)}>
+                                            Requeue
+                                          </Button>
+                                        )}
+                                        {["QUEUED", "CLAIMED", "RUNNING"].includes(w.status) && (
+                                          <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={busy} onClick={() => cancelItem(w.id)}>
+                                            Cancel
+                                          </Button>
+                                        )}
+                                      </div>
+                                    </div>
+                                    {w.lastError && (
+                                      <div className="mt-2 rounded-md bg-destructive/5 p-2 text-[0.6875rem] text-destructive">
+                                        {firstLine(w.lastError)}
+                                      </div>
+                                    )}
+                                    {w.leaseExpiresAt && ["CLAIMED", "RUNNING"].includes(w.status) && (
+                                      <div className="mt-2 text-[0.625rem] text-muted-foreground">
+                                        Lease expires {fmtShort(w.leaseExpiresAt)}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
                             </div>
                           ))}
                         </div>

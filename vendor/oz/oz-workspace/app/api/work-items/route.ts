@@ -40,6 +40,7 @@ export async function GET(request: Request) {
       include: {
         agent: { select: { id: true, name: true, color: true, icon: true, status: true, activeRoomId: true } },
         room: { select: { id: true, name: true } },
+        epic: { select: { id: true, title: true, order: true, status: true, prdId: true } },
       },
     })
 
@@ -54,6 +55,7 @@ export async function GET(request: Request) {
         maxIterations: w.maxIterations,
         roomId: w.roomId,
         agentId: w.agentId,
+        epicId: w.epicId,
         runId: w.runId,
         attempts: w.attempts,
         maxAttempts: w.maxAttempts,
@@ -64,6 +66,7 @@ export async function GET(request: Request) {
         updatedAt: w.updatedAt,
         room: w.room,
         agent: w.agent,
+        epic: w.epic,
       })),
     })
   } catch (error) {
@@ -113,11 +116,20 @@ export async function POST(request: Request) {
     const chainId = typeof body?.chainId === "string" ? body.chainId.trim() : ""
     const sourceItemId = typeof body?.sourceItemId === "string" ? body.sourceItemId.trim() : ""
     const sourceTaskId = typeof body?.sourceTaskId === "string" ? body.sourceTaskId.trim() : ""
+    const epicId = typeof body?.epicId === "string" ? body.epicId.trim() : ""
     const iteration = Number.isFinite(Number(body?.iteration)) ? Number(body.iteration) : undefined
     const maxIterations = Number.isFinite(Number(body?.maxIterations)) ? Number(body.maxIterations) : undefined
     const maxAttempts = Number.isFinite(Number(body?.maxAttempts)) ? Number(body.maxAttempts) : undefined
 
     const payload = JSON.stringify({ roomId, agentId, prompt, userId })
+
+    if (epicId) {
+      if (!chainId) return badRequest("epicId requires chainId (prdId)")
+      const epic = await prisma.epic.findUnique({ where: { id: epicId }, select: { prdId: true, prd: { select: { roomId: true } } } }).catch(() => null)
+      if (!epic || epic.prdId !== chainId || epic.prd.roomId !== roomId) {
+        return badRequest("epicId is invalid for this room/chain")
+      }
+    }
 
     const workItem = await prisma.workItem.create({
       data: {
@@ -129,6 +141,7 @@ export async function POST(request: Request) {
         ...(chainId ? { chainId } : {}),
         ...(sourceItemId ? { sourceItemId } : {}),
         ...(sourceTaskId ? { sourceTaskId } : {}),
+        ...(epicId ? { epicId } : {}),
         ...(iteration !== undefined ? { iteration: Math.max(0, Math.floor(iteration)) } : {}),
         ...(maxIterations !== undefined ? { maxIterations: Math.max(0, Math.floor(maxIterations)) } : {}),
         ...(maxAttempts !== undefined ? { maxAttempts: Math.max(1, Math.floor(maxAttempts)) } : {}),

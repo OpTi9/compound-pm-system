@@ -14,6 +14,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       include: {
         agent: { select: { id: true, name: true, color: true, icon: true, status: true, activeRoomId: true } },
         room: { select: { id: true, name: true, userId: true } },
+        epic: { select: { id: true, title: true, order: true, status: true, prdId: true } },
       },
     })
     if (!item) return NextResponse.json({ error: "Not found" }, { status: 404 })
@@ -31,6 +32,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       roomId: item.roomId,
       agentId: item.agentId,
       sourceTaskId: item.sourceTaskId,
+      epicId: item.epicId,
       claimedAt: item.claimedAt,
       leaseExpiresAt: item.leaseExpiresAt,
       runId: item.runId,
@@ -41,6 +43,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       updatedAt: item.updatedAt,
       room: { id: item.room.id, name: item.room.name },
       agent: item.agent,
+      epic: item.epic,
     })
   } catch (error) {
     if (error instanceof AuthError) return unauthorizedResponse()
@@ -51,4 +54,3 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
     )
   }
 }
-

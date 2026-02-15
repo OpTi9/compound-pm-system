@@ -264,10 +264,28 @@ model Prd {
 
   room      Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   creator   User?  @relation("PrdCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  epics     Epic[]
 
   @@index([roomId])
   @@index([status])
   @@index([createdBy])
+}
+
+model Epic {
+  id        String   @id @default(cuid())
+  prdId     String
+  title     String
+  status    String   @default("ACTIVE") // ACTIVE|COMPLETED
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  prd       Prd      @relation(fields: [prdId], references: [id], onDelete: Cascade)
+  workItems WorkItem[]
+
+  @@index([prdId])
+  @@index([status])
+  @@index([prdId, order])
 }
 
 model KnowledgeItem {
@@ -312,6 +330,7 @@ model WorkItem {
   roomId         String?
   agentId        String?
   sourceTaskId   String?
+  epicId         String?
 
   claimedAt      DateTime?
   leaseExpiresAt DateTime?
@@ -327,6 +346,7 @@ model WorkItem {
   room        Room? @relation(fields: [roomId], references: [id], onDelete: SetNull)
   agent       Agent? @relation(fields: [agentId], references: [id], onDelete: SetNull)
   sourceTask  Task? @relation(fields: [sourceTaskId], references: [id], onDelete: SetNull)
+  epic        Epic? @relation(fields: [epicId], references: [id], onDelete: SetNull)
 
   @@index([status, leaseExpiresAt])
   @@index([chainId])
@@ -335,4 +355,5 @@ model WorkItem {
   @@index([roomId])
   @@index([agentId])
   @@index([sourceTaskId])
+  @@index([epicId])
 }

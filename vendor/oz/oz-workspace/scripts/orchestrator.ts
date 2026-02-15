@@ -109,27 +109,53 @@ function extractJsonBlock(text: string): string | null {
   return null
 }
 
-function parseDecomposeTasks(text: string): Array<{ title: string; prompt: string; agentId?: string }> | null {
+type DecomposeTask = { title: string; prompt: string; agentId?: string }
+type DecomposeEpic = { title: string; tasks: DecomposeTask[] }
+type DecomposePlan = { tasks?: DecomposeTask[]; epics?: DecomposeEpic[] }
+
+function normalizeDecomposeTask(t: any): DecomposeTask | null {
+  const title = typeof t?.title === "string" ? t.title.trim() : ""
+  const prompt = typeof t?.prompt === "string" ? t.prompt.trim() : ""
+  const agentId = typeof t?.agentId === "string" ? t.agentId.trim() : ""
+  if (!title || !prompt) return null
+  return agentId ? { title, prompt, agentId } : { title, prompt }
+}
+
+function parseDecomposePlan(text: string): { tasks: DecomposeTask[]; epics: null } | { tasks: null; epics: DecomposeEpic[] } | null {
   const jsonText = extractJsonBlock(text)
   if (!jsonText) return null
   let parsed: any
   try {
-    parsed = JSON.parse(jsonText)
+    parsed = JSON.parse(jsonText) as DecomposePlan
   } catch {
     return null
   }
-  const tasks = parsed?.tasks
-  if (!Array.isArray(tasks)) return null
 
-  const out: Array<{ title: string; prompt: string; agentId?: string }> = []
-  for (const t of tasks) {
-    const title = typeof t?.title === "string" ? t.title.trim() : ""
-    const prompt = typeof t?.prompt === "string" ? t.prompt.trim() : ""
-    const agentId = typeof t?.agentId === "string" ? t.agentId.trim() : ""
-    if (!title || !prompt) continue
-    out.push(agentId ? { title, prompt, agentId } : { title, prompt })
+  const epicsRaw = (parsed as any)?.epics
+  if (Array.isArray(epicsRaw) && epicsRaw.length) {
+    const epics: DecomposeEpic[] = []
+    for (const e of epicsRaw) {
+      const title = typeof e?.title === "string" ? e.title.trim() : ""
+      const tasksRaw = e?.tasks
+      if (!title || !Array.isArray(tasksRaw) || tasksRaw.length === 0) continue
+      const tasks: DecomposeTask[] = []
+      for (const t of tasksRaw) {
+        const norm = normalizeDecomposeTask(t)
+        if (norm) tasks.push(norm)
+      }
+      if (tasks.length) epics.push({ title, tasks })
+    }
+    return epics.length ? { tasks: null, epics } : null
   }
-  return out
+
+  const tasksRaw = (parsed as any)?.tasks
+  if (!Array.isArray(tasksRaw)) return null
+  const tasks: DecomposeTask[] = []
+  for (const t of tasksRaw) {
+    const norm = normalizeDecomposeTask(t)
+    if (norm) tasks.push(norm)
+  }
+  return tasks.length ? { tasks, epics: null } : null
 }
 
 function parseLearnings(text: string): Array<{ kind?: string; title: string; content: string; tags?: string[] }> | null {
@@ -347,6 +373,7 @@ async function scheduleReviewForTask(item: WorkItemRow, payload: any, promptText
       roomId: item.roomId,
       agentId: rexAgentId,
       sourceTaskId: item.sourceTaskId,
+      epicId: item.epicId,
     },
   })
 }
@@ -444,6 +471,7 @@ async function scheduleReworkFromReview(reviewItem: WorkItemRow, reviewPayload: 
       roomId: parent.roomId,
       agentId: parent.agentId,
       sourceTaskId: parent.sourceTaskId,
+      epicId: parent.epicId,
     },
   })
 }
@@ -454,8 +482,8 @@ async function handleDecomposeSucceeded(item: WorkItemRow, payload: any, decompo
   const prdId = typeof payload?.prdId === "string" ? payload.prdId.trim() : (item.chainId || "").trim()
   if (!prdId) throw new Error("Missing prdId")
 
-  const tasks = parseDecomposeTasks(decomposeText)
-  if (!tasks || tasks.length === 0) throw new Error("No tasks parsed from decomposer output")
+  const plan = parseDecomposePlan(decomposeText)
+  if (!plan) throw new Error("No plan parsed from decomposer output")
 
   let defaultAgentId: string | null =
     typeof payload?.defaultAgentId === "string" ? payload.defaultAgentId.trim() : null
@@ -467,22 +495,20 @@ async function handleDecomposeSucceeded(item: WorkItemRow, payload: any, decompo
 
   const userId = payload?.userId ?? null
 
-  // Enqueue tasks (dedupe best-effort by title+prompt hash in chain).
-  for (const t of tasks) {
+  const enqueueTask = async (t: DecomposeTask, opts: { epicId?: string | null; epicKey?: string | null }) => {
     let agentId = t.agentId || ""
-    if (agentId && !(await isAgentInRoom(item.roomId, agentId))) agentId = ""
-    agentId = agentId || defaultAgentId
+    if (agentId && !(await isAgentInRoom(item.roomId!, agentId))) agentId = ""
+    agentId = agentId || defaultAgentId!
 
-    const prompt = [
-      t.prompt.trim(),
-      "",
-      "(This task was generated from PRD decomposition.)",
-    ].join("\n")
+    const prompt = [t.prompt.trim(), "", "(This task was generated from PRD decomposition.)"].join("\n")
 
-    const stableKey = crypto.createHash("sha1").update(`${prdId}\n${t.title}\n${t.prompt}`).digest("hex")
+    const stableKeyInput = opts.epicKey
+      ? `${prdId}\nEPIC:${opts.epicKey}\n${t.title}\n${t.prompt}`
+      : `${prdId}\n${t.title}\n${t.prompt}`
+    const stableKey = crypto.createHash("sha1").update(stableKeyInput).digest("hex")
     const markerId = `decompose:${prdId}:${stableKey}`
     const marker = await prisma.agentCallback.findUnique({ where: { id: markerId }, select: { id: true } }).catch(() => null)
-    if (marker) continue
+    if (marker) return
     await prisma.agentCallback.create({ data: { id: markerId, response: "1" } }).catch(() => null)
 
     await prisma.workItem.create({
@@ -503,8 +529,54 @@ async function handleDecomposeSucceeded(item: WorkItemRow, payload: any, decompo
         maxIterations: 3,
         roomId: item.roomId,
         agentId,
+        ...(opts.epicId ? { epicId: opts.epicId } : {}),
       },
     })
+  }
+
+  if (plan.epics) {
+    for (let i = 0; i < plan.epics.length; i++) {
+      const e = plan.epics[i]
+      const epicTitle = e.title.trim()
+      if (!epicTitle) continue
+
+      const epicKey = crypto.createHash("sha1").update(`${prdId}\n${epicTitle}`).digest("hex")
+      const epicMarkerId = `epic:${prdId}:${epicKey}`
+      let epicId: string | null = null
+
+      const marker = await prisma.agentCallback.findUnique({ where: { id: epicMarkerId }, select: { response: true } }).catch(() => null)
+      if (marker?.response) {
+        const existing = await prisma.epic.findUnique({ where: { id: marker.response }, select: { id: true } }).catch(() => null)
+        if (existing?.id) epicId = existing.id
+      }
+
+      if (!epicId) {
+        const created = await prisma.epic.create({
+          data: { prdId, title: epicTitle, status: "ACTIVE", order: i },
+          select: { id: true },
+        })
+        epicId = created.id
+        await prisma.agentCallback.upsert({
+          where: { id: epicMarkerId },
+          update: { response: epicId },
+          create: { id: epicMarkerId, response: epicId },
+        }).catch(() => null)
+      } else {
+        // Best-effort sync if the decomposer changed ordering/titles.
+        await prisma.epic.updateMany({ where: { id: epicId }, data: { title: epicTitle, order: i } }).catch(() => null)
+      }
+
+      for (const t of e.tasks) {
+        await enqueueTask(t, { epicId, epicKey })
+      }
+    }
+  } else if (plan.tasks) {
+    // Enqueue tasks (dedupe best-effort by title+prompt hash in chain).
+    for (const t of plan.tasks) {
+      await enqueueTask(t, { epicId: null, epicKey: null })
+    }
+  } else {
+    throw new Error("No tasks parsed from decomposer output")
   }
 
   await prisma.prd.updateMany({ where: { id: prdId }, data: { status: "ACTIVE" } })
