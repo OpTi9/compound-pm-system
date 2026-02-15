@@ -492,7 +492,7 @@ Issue Created
     │
     ▼
 Squad Assigned
-    ├── GLM-4.7 (Lead)
+    ├── GLM-5 (Lead)
     ├── Kimi (Implementer + Self-Evolution) ⭐ NEW ROLE
     └── MiniMax (Fallback)
     │
