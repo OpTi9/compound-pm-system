@@ -29,6 +29,8 @@ type WorkStatus = "QUEUED" | "CLAIMED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "C
 
 type WorkItemRow = Awaited<ReturnType<typeof prisma.workItem.findUnique>>
 
+const ORCH_INSTANCE_ID = (process.env.OZ_ORCH_INSTANCE_ID || "").trim() || `orch_${crypto.randomUUID()}`
+
 function now(): Date {
   return new Date()
 }
@@ -504,6 +506,7 @@ async function claimNext(opts: {
       status: "CLAIMED",
       claimedAt: now(),
       leaseExpiresAt,
+      leaseOwner: ORCH_INSTANCE_ID,
       attempts: { increment: 1 },
       lastError: null,
     },
@@ -544,6 +547,7 @@ async function requeueExpired(opts: { leaseMs: number }) {
             data: {
               status: run.state as WorkStatus,
               leaseExpiresAt: null,
+              leaseOwner: null,
               lastError: run.state === "FAILED" ? (run.errorMessage || "Run failed") : null,
             },
           })
@@ -561,7 +565,7 @@ async function requeueExpired(opts: { leaseMs: number }) {
         if (msg?.content && msg.content.trim()) {
           await prisma.workItem.updateMany({
             where: { id: w.id, status: { in: ["CLAIMED", "RUNNING"] } },
-            data: { status: "SUCCEEDED", leaseExpiresAt: null, lastError: null },
+            data: { status: "SUCCEEDED", leaseExpiresAt: null, leaseOwner: null, lastError: null },
           })
           continue
         }
@@ -577,12 +581,14 @@ async function requeueExpired(opts: { leaseMs: number }) {
         ? {
             status: "FAILED",
             leaseExpiresAt: null,
+            leaseOwner: null,
             lastError: "Lease expired too many times",
           }
         : {
             status: "QUEUED",
             claimedAt: null,
             leaseExpiresAt: null,
+            leaseOwner: null,
             runId: null,
             lastError: "Lease expired; requeued",
           },
@@ -595,6 +601,7 @@ async function reconcileFinalizedRuns(opts: { excludeIds: string[] }) {
   const running = await prisma.workItem.findMany({
     where: {
       status: "RUNNING",
+      leaseOwner: ORCH_INSTANCE_ID,
       runId: { not: null },
       ...(exclude.length ? { id: { notIn: exclude } } : {}),
     },
@@ -627,10 +634,11 @@ async function reconcileFinalizedRuns(opts: { excludeIds: string[] }) {
     const run = runById.get(runId)
     if (run?.state === "SUCCEEDED" || run?.state === "FAILED" || run?.state === "CANCELLED") {
       await prisma.workItem.updateMany({
-        where: { id: w.id, status: "RUNNING" },
+        where: { id: w.id, status: "RUNNING", leaseOwner: ORCH_INSTANCE_ID },
         data: {
           status: run.state as WorkStatus,
           leaseExpiresAt: null,
+          leaseOwner: null,
           lastError: run.state === "FAILED" ? (run.errorMessage || "Run failed") : null,
         },
       }).catch(() => {})
@@ -640,8 +648,8 @@ async function reconcileFinalizedRuns(opts: { excludeIds: string[] }) {
     const msg = msgById.get(runId)
     if (msg?.content && msg.content.trim()) {
       await prisma.workItem.updateMany({
-        where: { id: w.id, status: "RUNNING" },
-        data: { status: "SUCCEEDED", leaseExpiresAt: null, lastError: null },
+        where: { id: w.id, status: "RUNNING", leaseOwner: ORCH_INSTANCE_ID },
+        data: { status: "SUCCEEDED", leaseExpiresAt: null, leaseOwner: null, lastError: null },
       }).catch(() => {})
     }
   }
@@ -651,7 +659,7 @@ async function bumpLeases(ids: string[], leaseMs: number) {
   const uniq = Array.from(new Set((ids || []).filter(Boolean)))
   if (uniq.length === 0) return
   await prisma.workItem.updateMany({
-    where: { id: { in: uniq }, status: "RUNNING" },
+    where: { id: { in: uniq }, status: "RUNNING", leaseOwner: ORCH_INSTANCE_ID },
     data: { leaseExpiresAt: new Date(Date.now() + leaseMs) },
   }).catch(() => {})
 }
@@ -660,6 +668,7 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
   const item = await prisma.workItem.findUnique({ where: { id: workItemId } })
   if (!item) return
   if (item.status !== "CLAIMED") return
+  if ((item.leaseOwner || "") !== ORCH_INSTANCE_ID) return
 
   const payload = safeJsonParse<any>(item.payload, {})
   const roomId: string | null = (payload.roomId ?? item.roomId ?? null) as any
@@ -668,21 +677,17 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
   const userId: string | null = (payload.userId ?? null) as any
 
   if (!roomId || !agentId || !prompt || typeof prompt !== "string") {
-    await prisma.workItem.update({
-      where: { id: item.id },
-      data: {
-        status: "FAILED",
-        leaseExpiresAt: null,
-        lastError: "Invalid payload (requires roomId, agentId, prompt)",
-      },
+    await prisma.workItem.updateMany({
+      where: { id: item.id, status: "CLAIMED", leaseOwner: ORCH_INSTANCE_ID },
+      data: { status: "FAILED", leaseExpiresAt: null, leaseOwner: null, lastError: "Invalid payload (requires roomId, agentId, prompt)" },
     })
     return
   }
 
   const runId = item.runId || newRunId(item.id)
   const chainId = await ensureChainId({ id: item.id, chainId: item.chainId })
-  await prisma.workItem.updateMany({
-    where: { id: item.id, status: "CLAIMED" },
+  const started = await prisma.workItem.updateMany({
+    where: { id: item.id, status: "CLAIMED", leaseOwner: ORCH_INSTANCE_ID },
     data: {
       status: "RUNNING",
       runId,
@@ -691,6 +696,7 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
       leaseExpiresAt: new Date(Date.now() + opts.leaseMs),
     },
   })
+  if (started.count !== 1) return
 
   try {
     const res = await invokeAgent({
@@ -703,24 +709,16 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
     })
 
     if (!res.success) {
-      await prisma.workItem.update({
-        where: { id: item.id },
-        data: {
-          status: "FAILED",
-          leaseExpiresAt: null,
-          lastError: truncate(res.error || "invokeAgent failed", 4000),
-        },
+      await prisma.workItem.updateMany({
+        where: { id: item.id, status: "RUNNING", leaseOwner: ORCH_INSTANCE_ID },
+        data: { status: "FAILED", leaseExpiresAt: null, leaseOwner: null, lastError: truncate(res.error || "invokeAgent failed", 4000) },
       })
       return
     }
 
-    await prisma.workItem.update({
-      where: { id: item.id },
-      data: {
-        status: "SUCCEEDED",
-        leaseExpiresAt: null,
-        lastError: null,
-      },
+    await prisma.workItem.updateMany({
+      where: { id: item.id, status: "RUNNING", leaseOwner: ORCH_INSTANCE_ID },
+      data: { status: "SUCCEEDED", leaseExpiresAt: null, leaseOwner: null, lastError: null },
     })
 
     // Completion hooks:
@@ -816,13 +814,9 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
-    await prisma.workItem.update({
-      where: { id: item.id },
-      data: {
-        status: "FAILED",
-        leaseExpiresAt: null,
-        lastError: truncate(msg, 4000),
-      },
+    await prisma.workItem.updateMany({
+      where: { id: item.id, status: "RUNNING", leaseOwner: ORCH_INSTANCE_ID },
+      data: { status: "FAILED", leaseExpiresAt: null, leaseOwner: null, lastError: truncate(msg, 4000) },
     })
 
     if (item.type === "decompose") {
@@ -841,7 +835,10 @@ async function tick(opts: { pollMs: number; leaseMs: number }) {
   const claimed = await claimNext({ leaseMs: opts.leaseMs })
   if (!claimed) return
   if (claimed.attempts > claimed.maxAttempts) {
-    await prisma.workItem.update({ where: { id: claimed.id }, data: { status: "FAILED", leaseExpiresAt: null, lastError: "Max attempts exceeded" } })
+    await prisma.workItem.updateMany({
+      where: { id: claimed.id, status: "CLAIMED", leaseOwner: ORCH_INSTANCE_ID },
+      data: { status: "FAILED", leaseExpiresAt: null, leaseOwner: null, lastError: "Max attempts exceeded" },
+    })
     return
   }
   await handleWorkItem(claimed.id, { leaseMs: opts.leaseMs })
@@ -853,7 +850,7 @@ async function main() {
   const concurrency = Math.max(1, Math.min(16, envInt("OZ_ORCH_CONCURRENCY", 1)))
 
   // eslint-disable-next-line no-console
-  console.log("[orchestrator] starting", { pollMs, leaseMs, concurrency })
+  console.log("[orchestrator] starting", { pollMs, leaseMs, concurrency, instanceId: ORCH_INSTANCE_ID })
 
   const inFlight = new Map<string, Promise<void>>()
 
@@ -870,7 +867,10 @@ async function main() {
       if (!claimed) break
 
       if (claimed.attempts > claimed.maxAttempts) {
-        await prisma.workItem.update({ where: { id: claimed.id }, data: { status: "FAILED", leaseExpiresAt: null, lastError: "Max attempts exceeded" } }).catch(() => {})
+        await prisma.workItem.updateMany({
+          where: { id: claimed.id, status: "CLAIMED", leaseOwner: ORCH_INSTANCE_ID },
+          data: { status: "FAILED", leaseExpiresAt: null, leaseOwner: null, lastError: "Max attempts exceeded" },
+        }).catch(() => {})
         continue
       }
 

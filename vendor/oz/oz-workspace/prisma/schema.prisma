@@ -102,6 +102,8 @@ model Message {
   room  Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   agent Agent? @relation(fields: [authorId], references: [id], onDelete: SetNull)
   user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, userId])
 }
 
 model Artifact {
@@ -118,6 +120,8 @@ model Artifact {
   room  Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
   agent Agent? @relation(fields: [createdBy], references: [id], onDelete: SetNull)
   user  User?  @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, userId])
 }
 
 model Notification {
@@ -151,6 +155,8 @@ model Task {
   assignee Agent? @relation("TaskAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
   creator  Agent? @relation("TaskCreator", fields: [createdBy], references: [id], onDelete: SetNull)
   user     User?  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, userId])
 }
 model AgentOrchestration {
   id            String   @id @default(cuid())
@@ -334,6 +340,9 @@ model WorkItem {
 
   claimedAt      DateTime?
   leaseExpiresAt DateTime?
+  // Identifies which orchestrator instance currently "owns" this lease. Used to prevent
+  // stale/overlapping updates when multiple orchestrators are running.
+  leaseOwner     String?
   runId          String? // invocationId used with invokeAgent (stable id for correlation)
 
   attempts       Int      @default(0)
@@ -349,6 +358,7 @@ model WorkItem {
   epic        Epic? @relation(fields: [epicId], references: [id], onDelete: SetNull)
 
   @@index([status, leaseExpiresAt])
+  @@index([leaseOwner])
   @@index([chainId])
   @@index([sourceItemId])
   @@index([chainId, iteration])

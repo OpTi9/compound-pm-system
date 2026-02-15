@@ -5,10 +5,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -70,6 +73,23 @@ type Worker struct {
 	platform       string // Docker daemon platform (e.g., "linux/amd64" or "linux/arm64")
 }
 
+type permanentError struct{ err error }
+
+func (e permanentError) Error() string { return e.err.Error() }
+func (e permanentError) Unwrap() error { return e.err }
+
+func envInt(key string, fallback int) int {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return n
+}
+
 func New(ctx context.Context, config Config) (*Worker, error) {
 	workerCtx, cancel := context.WithCancel(ctx)
 
@@ -128,6 +148,11 @@ func New(ctx context.Context, config Config) (*Worker, error) {
 }
 
 func (w *Worker) Start() error {
+	maxAttempts := envInt("OZ_RECONNECT_MAX_ATTEMPTS", 0)        // 0 = unlimited (default)
+	windowSeconds := envInt("OZ_RECONNECT_WINDOW_SECONDS", 0)   // 0 = no windowing
+	var failures int
+	var firstFailure time.Time
+
 	for {
 		select {
 		case <-w.ctx.Done():
@@ -136,6 +161,24 @@ func (w *Worker) Start() error {
 		}
 
 		if err := w.connect(); err != nil {
+			var p permanentError
+			if errors.As(err, &p) {
+				return err
+			}
+
+			now := time.Now()
+			if failures == 0 {
+				firstFailure = now
+			}
+			failures++
+			if windowSeconds > 0 && now.Sub(firstFailure) > time.Duration(windowSeconds)*time.Second {
+				failures = 1
+				firstFailure = now
+			}
+			if maxAttempts > 0 && failures >= maxAttempts {
+				return fmt.Errorf("reconnect attempts exceeded (failures=%d window_seconds=%d): %w", failures, windowSeconds, err)
+			}
+
 			log.Errorf(w.ctx, "Failed to connect: %v, retrying in %v", err, w.reconnectDelay)
 			time.Sleep(w.reconnectDelay)
 
@@ -145,6 +188,8 @@ func (w *Worker) Start() error {
 		}
 
 		w.reconnectDelay = InitialReconnectDelay
+		failures = 0
+		firstFailure = time.Time{}
 
 		w.run()
 	}
@@ -153,7 +198,7 @@ func (w *Worker) Start() error {
 func (w *Worker) connect() error {
 	u, err := url.Parse(w.config.WebSocketURL)
 	if err != nil {
-		return fmt.Errorf("invalid WebSocket URL: %w", err)
+		return permanentError{err: fmt.Errorf("invalid WebSocket URL: %w", err)}
 	}
 
 	query := u.Query()
@@ -168,6 +213,10 @@ func (w *Worker) connect() error {
 	conn, resp, err := websocket.DefaultDialer.Dial(u.String(), headers)
 	if err != nil {
 		if resp != nil {
+			// Treat most 4xx as permanent configuration/auth errors (retrying won't help).
+			if resp.StatusCode >= 400 && resp.StatusCode < 500 && resp.StatusCode != 429 {
+				return permanentError{err: fmt.Errorf("failed to dial WebSocket (permanent): %w (%s)", err, resp.Status)}
+			}
 			return fmt.Errorf("failed to dial WebSocket: %w\n%s", err, resp.Status)
 		}
 		return fmt.Errorf("failed to dial WebSocket: %w", err)
@@ -322,7 +371,21 @@ func (w *Worker) handleMessage(message []byte) {
 	case types.MessageTypeTaskAssignment:
 		var assignment types.TaskAssignmentMessage
 		if err := json.Unmarshal(msg.Data, &assignment); err != nil {
-			log.Errorf(w.ctx, "Failed to unmarshal task assignment: %v", err)
+			// Best-effort: extract task_id and fail fast so the control plane doesn't wait on stale claim timeouts.
+			var partial struct {
+				TaskID string `json:"task_id"`
+			}
+			if err2 := json.Unmarshal(msg.Data, &partial); err2 == nil {
+				taskID := strings.TrimSpace(partial.TaskID)
+				if taskID != "" {
+					log.Errorf(w.ctx, "Failed to unmarshal task assignment for taskID=%s: %v", taskID, err)
+					_ = w.sendTaskFailed(taskID, "Invalid task assignment payload (worker could not parse assignment)", "", nil, "")
+					return
+				}
+			}
+			log.Errorf(w.ctx, "Failed to unmarshal task assignment (no task_id): %v", err)
+			// Protocol mismatch; drop the connection so the server requeues any claimed tasks immediately.
+			w.forceDisconnect("protocol_error: bad task assignment")
 			return
 		}
 		w.handleTaskAssignment(&assignment)
@@ -338,6 +401,17 @@ func (w *Worker) handleMessage(message []byte) {
 	default:
 		log.Warnf(w.ctx, "Unknown message type: %s", msg.Type)
 	}
+}
+
+func (w *Worker) forceDisconnect(reason string) {
+	w.connMutex.Lock()
+	conn := w.conn
+	w.connMutex.Unlock()
+	if conn == nil {
+		return
+	}
+	log.Warnf(w.ctx, "Forcing disconnect: %s", reason)
+	_ = conn.Close()
 }
 
 func (w *Worker) handleTaskCancel(taskID string) {
@@ -369,17 +443,29 @@ func (w *Worker) handleTaskCancel(taskID string) {
 }
 
 func (w *Worker) handleTaskAssignment(assignment *types.TaskAssignmentMessage) {
-	log.Infof(w.ctx, "Received task assignment: taskID=%s, title=%s", assignment.TaskID, assignment.Task.Title)
+	taskID := strings.TrimSpace(assignment.TaskID)
+	if taskID == "" {
+		log.Errorf(w.ctx, "Received task assignment with empty task_id")
+		w.forceDisconnect("protocol_error: empty task_id")
+		return
+	}
+	if assignment.Task == nil {
+		log.Errorf(w.ctx, "Received task assignment with missing task for taskID=%s", taskID)
+		_ = w.sendTaskFailed(taskID, "Invalid task assignment: missing task", "", nil, "")
+		return
+	}
+
+	log.Infof(w.ctx, "Received task assignment: taskID=%s, title=%s", taskID, assignment.Task.Title)
 
 	// It's important to update the task state to claimed as the task lifecycle treats this as a dependency to advance to further states.
-	if err := w.sendTaskClaimed(assignment.TaskID); err != nil {
+	if err := w.sendTaskClaimed(taskID); err != nil {
 		log.Errorf(w.ctx, "Failed to send task claimed message: %v", err)
 	}
 
 	taskCtx, taskCancel := context.WithCancel(w.ctx)
 
 	w.tasksMutex.Lock()
-	w.activeTasks[assignment.TaskID] = taskCancel
+	w.activeTasks[taskID] = taskCancel
 	w.tasksMutex.Unlock()
 
 	go w.executeTask(taskCtx, assignment)
@@ -492,7 +578,7 @@ func (w *Worker) executeTaskInDocker(ctx context.Context, assignment *types.Task
 		log.Debugf(ctx, "Using Docker image from assignment: %s", imageName)
 	} else {
 		imageName = "ubuntu:22.04"
-		if task.AgentConfigSnapshot.EnvironmentID != nil {
+		if task != nil && task.AgentConfigSnapshot != nil && task.AgentConfigSnapshot.EnvironmentID != nil {
 			log.Warnf(ctx, "Environment %s specified but no Docker image resolved. Using default: %s",
 				*task.AgentConfigSnapshot.EnvironmentID, imageName)
 		} else {
