@@ -49,13 +49,12 @@ fi
 
 workdir="/workspace"
 oz_dir="$workdir/.oz"
-mkdir -p "$oz_dir"
 
 apply_env_vars() {
   if [ -z "${OZ_ENV_VARS-}" ]; then
     return 0
   fi
-  tmp="$oz_dir/env_vars.txt"
+  tmp="/tmp/oz_env_vars_$$.txt"
   printf "%s\n" "$OZ_ENV_VARS" >"$tmp"
   while IFS= read -r line; do
     [ -z "$line" ] && continue
@@ -107,10 +106,9 @@ clone_repos() {
 
     dest="$workdir/$base"
     if [ "$i" -eq 0 ]; then
-      # If /workspace has no non-dot entries (we create .oz, but dotfiles don't count),
-      # clone the first repo into /workspace for the common "single repo" case.
-      set -- "$workdir"/*
-      if [ "${1-}" = "$workdir/*" ]; then
+      # Prefer cloning the first repo into /workspace, but only if it's truly empty.
+      # git clone fails if the directory is non-empty (even if it only contains dotfiles).
+      if [ -z "$(ls -A "$workdir" 2>/dev/null || true)" ]; then
         dest="$workdir"
       fi
     fi
@@ -131,7 +129,7 @@ run_setup_commands() {
   printf "%s\n" "$OZ_ENV_SETUP_COMMANDS" | while IFS= read -r cmd; do
     cmd="$(printf "%s" "$cmd" | tr -d '\r')"
     [ -z "$cmd" ] && continue
-    (cd "$workdir" && /bin/sh -lc "$cmd")
+    (cd "$workdir" && /bin/sh -c "$cmd")
   done
 }
 
@@ -154,6 +152,7 @@ case "$norm" in
     apply_env_vars
     clone_repos
     run_setup_commands
+    mkdir -p "$oz_dir"
     out="$oz_dir/agent_output.txt"
     result="$oz_dir/result.json"
     set +e
@@ -170,6 +169,7 @@ case "$norm" in
     apply_env_vars
     clone_repos
     run_setup_commands
+    mkdir -p "$oz_dir"
     out="$oz_dir/agent_output.txt"
     result="$oz_dir/result.json"
     set +e
@@ -186,6 +186,7 @@ case "$norm" in
     apply_env_vars
     clone_repos
     run_setup_commands
+    mkdir -p "$oz_dir"
     out="$oz_dir/agent_output.txt"
     result="$oz_dir/result.json"
     set +e

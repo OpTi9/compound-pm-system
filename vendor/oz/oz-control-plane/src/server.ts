@@ -40,6 +40,20 @@ function envVarsTextToObject(text: string | null | undefined): Record<string, st
   return out
 }
 
+function redactedEnvVars(text: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {}
+  const obj = envVarsTextToObject(text)
+  for (const k of Object.keys(obj)) out[k] = "<redacted>"
+  return out
+}
+
+function canViewEnvVars(auth: any, env: { ownerKeyHash: string | null }): boolean {
+  if (auth?.isAdmin) return true
+  // Global environments (ownerKeyHash=null) should not expose secrets to non-admins.
+  if (!env.ownerKeyHash) return false
+  return auth?.ownerKeyHash && env.ownerKeyHash === auth.ownerKeyHash
+}
+
 function safeParseJsonArray(text: string | null | undefined): any[] {
   if (!text) return []
   try {
@@ -151,7 +165,7 @@ async function main() {
             docker_image: e.dockerImage,
             repos: toLines(e.reposText),
             setup_commands: toLines(e.setupCommandsText),
-            env_vars: envVarsTextToObject(e.envVarsText),
+            env_vars: canViewEnvVars(auth, e) ? envVarsTextToObject(e.envVarsText) : redactedEnvVars(e.envVarsText),
             scope: e.ownerKeyHash ? "OWNER" : "GLOBAL",
             created_at: e.createdAt.toISOString(),
             updated_at: e.updatedAt.toISOString(),
@@ -174,7 +188,7 @@ async function main() {
           docker_image: env.dockerImage,
           repos: toLines(env.reposText),
           setup_commands: toLines(env.setupCommandsText),
-          env_vars: envVarsTextToObject(env.envVarsText),
+          env_vars: canViewEnvVars(auth, env) ? envVarsTextToObject(env.envVarsText) : redactedEnvVars(env.envVarsText),
           scope: env.ownerKeyHash ? "OWNER" : "GLOBAL",
           created_at: env.createdAt.toISOString(),
           updated_at: env.updatedAt.toISOString(),

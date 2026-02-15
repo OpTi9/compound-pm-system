@@ -194,7 +194,6 @@ export function attachWorkerWebSocket(server: http.Server) {
           docker_image: dockerImage,
           sidecar_image: sidecarImage,
           env_vars: {
-            OZ_API_KEY: process.env.OZ_ADMIN_API_KEY || "",
             OZ_TASK_PROMPT: claimed.prompt,
             ...(envRepos.length ? { OZ_ENV_REPOS: envRepos.join("\n") } : {}),
             ...(envSetup.length ? { OZ_ENV_SETUP_COMMANDS: envSetup.join("\n") } : {}),

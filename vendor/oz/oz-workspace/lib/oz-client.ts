@@ -129,13 +129,22 @@ export async function runAgent(options: RunAgentOptions): Promise<string> {
         if (!msg.toLowerCase().includes("unique")) throw err
       })
 
-    await runLocalAgent({
-      taskId: options.taskId,
-      roomId: options.roomId,
-      agentId: options.agentId,
-      userId: options.userId ?? null,
-      prompt: options.prompt,
-    })
+    try {
+      await runLocalAgent({
+        taskId: options.taskId,
+        roomId: options.roomId,
+        agentId: options.agentId,
+        userId: options.userId ?? null,
+        prompt: options.prompt,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      await prisma.agentRun.updateMany({
+        where: { id: options.taskId, state: { notIn: ["SUCCEEDED", "FAILED", "CANCELLED"] } },
+        data: { state: "FAILED", errorMessage: msg, completedAt: new Date() },
+      })
+      throw err
+    }
     return options.taskId
   }
 
