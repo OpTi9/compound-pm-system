@@ -20,6 +20,30 @@ export async function POST() {
     await prisma.agent.deleteMany({ where: { userId } })
 
     // Create agents
+    const rex = await prisma.agent.create({
+      data: {
+        name: "Rex",
+        color: "#111827",
+        repoUrl: "",
+        harness: "codex",
+        systemPrompt: [
+          "You are Rex, the Relentless Auditor. Your job is to review work and find problems.",
+          "",
+          "RESPONSE FORMAT (mandatory):",
+          "- If acceptable: reply with a single line: APPROVED",
+          "- If changes needed: reply starting with: CHANGES_NEEDED: <one sentence summary>",
+          "  Then add bullet points with the required fixes.",
+          "",
+          "Do not include any @mentions unless explicitly asked.",
+        ].join("\n"),
+        skills: JSON.stringify([]),
+        mcpServers: JSON.stringify([]),
+        scripts: JSON.stringify([]),
+        status: "idle",
+        userId,
+      },
+    })
+
     const backendLead = await prisma.agent.create({
       data: {
         name: "backend-lead",
@@ -86,7 +110,7 @@ export async function POST() {
         name: "Fraud",
         description: "Fraud detection system development",
         userId,
-        agents: { create: [{ agentId: backendLead.id }, { agentId: dataLead.id }] },
+        agents: { create: [{ agentId: backendLead.id }, { agentId: dataLead.id }, { agentId: rex.id }] },
       },
     })
 
@@ -95,7 +119,7 @@ export async function POST() {
         name: "Product",
         description: "Product development and feature planning",
         userId,
-        agents: { create: [{ agentId: productLead.id }, { agentId: designLead.id }] },
+        agents: { create: [{ agentId: productLead.id }, { agentId: designLead.id }, { agentId: rex.id }] },
       },
     })
 
@@ -104,7 +128,7 @@ export async function POST() {
         name: "Data",
         description: "Data infrastructure and pipelines",
         userId,
-        agents: { create: [{ agentId: dataLead.id }, { agentId: backendLead.id }] },
+        agents: { create: [{ agentId: dataLead.id }, { agentId: backendLead.id }, { agentId: rex.id }] },
       },
     })
 
