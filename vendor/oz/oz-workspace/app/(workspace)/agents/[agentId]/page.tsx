@@ -28,14 +28,54 @@ export default function AgentDetailPage({
   const router = useRouter()
   const { updateAgent, deleteAgent } = useAgentStore()
   const [agent, setAgent] = React.useState<Agent | null>(null)
+  const [loadError, setLoadError] = React.useState<string | null>(null)
   const [saving, setSaving] = React.useState(false)
   const [deleting, setDeleting] = React.useState(false)
   const [dirty, setDirty] = React.useState(false)
 
   React.useEffect(() => {
+    let cancelled = false
+    setLoadError(null)
     fetch(`/api/agents/${agentId}`)
-      .then((r) => r.json())
-      .then(setAgent)
+      .then(async (r) => {
+        const body = await r.json().catch(() => null as any)
+        if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`)
+        return body
+      })
+      .then((data) => {
+        if (cancelled) return
+        // Defensive normalization to keep form inputs controlled.
+        // (Prevents React uncontrolled<->controlled warnings when API returns partial/invalid shapes.)
+        const s = (v: any, fallback = ""): string => (typeof v === "string" ? v : fallback)
+        const arr = (v: any): string[] => (Array.isArray(v) ? v.map(String) : [])
+        const normalized: Agent = {
+          id: s(data?.id),
+          name: s(data?.name),
+          color: s(data?.color, "#3B82F6"),
+          icon: s(data?.icon, "robot"),
+          repoUrl: s(data?.repoUrl),
+          harness: s(data?.harness, "claude-code") as Agent["harness"],
+          environmentId: s(data?.environmentId),
+          systemPrompt: s(data?.systemPrompt),
+          skills: arr(data?.skills),
+          mcpServers: arr(data?.mcpServers),
+          scripts: arr(data?.scripts),
+          status: s(data?.status, "idle") as Agent["status"],
+          createdAt: s(data?.createdAt),
+        }
+        if (!normalized.id || !normalized.name) {
+          throw new Error("Invalid agent payload")
+        }
+        setAgent(normalized)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        setAgent(null)
+        setLoadError(e instanceof Error ? e.message : "Failed to load agent")
+      })
+    return () => {
+      cancelled = true
+    }
   }, [agentId])
 
   const update = (patch: Partial<Agent>) => {
@@ -65,6 +105,22 @@ export default function AgentDetailPage({
     } finally {
       setDeleting(false)
     }
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex h-full flex-col">
+        <header className="flex h-12 items-center gap-2 border-b px-4">
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => router.push("/agents")}>
+            <ArrowLeftIcon className="h-4 w-4" />
+          </Button>
+          <h1 className="text-sm font-semibold">Agent</h1>
+        </header>
+        <div className="flex flex-1 items-center justify-center p-6 text-sm text-muted-foreground">
+          {loadError}
+        </div>
+      </div>
+    )
   }
 
   if (!agent) {
@@ -109,7 +165,7 @@ export default function AgentDetailPage({
                 <FieldLabel htmlFor="detail-name">Name</FieldLabel>
                 <Input
                   id="detail-name"
-                  value={agent.name}
+                  value={agent.name || ""}
                   onChange={(e) => update({ name: e.target.value })}
                 />
               </Field>
@@ -158,7 +214,7 @@ export default function AgentDetailPage({
               </div>
               <Input
                 id="detail-env"
-                value={agent.environmentId}
+                value={agent.environmentId || ""}
                 onChange={(e) => update({ environmentId: e.target.value })}
                 placeholder="e.g. your-environment-id"
               />
@@ -167,7 +223,7 @@ export default function AgentDetailPage({
               <FieldLabel htmlFor="detail-prompt">System Prompt</FieldLabel>
               <Textarea
                 id="detail-prompt"
-                value={agent.systemPrompt}
+                value={agent.systemPrompt || ""}
                 onChange={(e) => update({ systemPrompt: e.target.value })}
                 rows={5}
               />

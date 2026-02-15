@@ -18,9 +18,9 @@ export default function SettingsPage() {
   }, [fetchSettings])
 
   React.useEffect(() => {
-    if (settings.oz_api_key !== undefined) {
-      setApiKey(settings.oz_api_key)
-    }
+    // Prisma can yield `null` for unset settings; keep the input controlled with a string.
+    if (typeof settings.oz_api_key === "string") setApiKey(settings.oz_api_key)
+    else if (settings.oz_api_key === null) setApiKey("")
   }, [settings.oz_api_key])
 
   const handleSave = async () => {

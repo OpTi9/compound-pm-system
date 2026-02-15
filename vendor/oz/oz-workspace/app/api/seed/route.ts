@@ -6,6 +6,13 @@ export async function POST() {
   try {
     const userId = await getAuthenticatedUserId()
 
+    // Prefer harnesses that are configured in the local runner (prevents seeded agents from
+    // being created with harnesses that can't run on this machine).
+    const hasClaude = !!process.env.OZ_PROVIDER_CLAUDE_TYPE
+    const hasCodex = !!process.env.OZ_PROVIDER_CODEX_TYPE
+    const defaultHarness = hasClaude ? "claude-code" : hasCodex ? "codex" : "claude-code"
+    const reviewerHarness = hasCodex ? "codex" : defaultHarness
+
     // Clear existing data for this user
     await prisma.notification.deleteMany({ where: { userId } })
     await prisma.artifact.deleteMany({ where: { userId } })
@@ -25,7 +32,7 @@ export async function POST() {
         name: "Rex",
         color: "#111827",
         repoUrl: "",
-        harness: "codex",
+        harness: reviewerHarness,
         systemPrompt: [
           "You are Rex, the Relentless Auditor. Your job is to review work and find problems.",
           "",
@@ -49,7 +56,7 @@ export async function POST() {
         name: "Avery",
         color: "#0F766E",
         repoUrl: "",
-        harness: "claude-code",
+        harness: defaultHarness,
         systemPrompt: [
           "You are Avery, the Architect. You decompose product requirements into airtight engineering plans.",
           "",
@@ -85,7 +92,7 @@ export async function POST() {
         name: "backend-lead",
         color: "#3B82F6",
         repoUrl: "https://github.com/acme/backend-service",
-        harness: "claude-code",
+        harness: defaultHarness,
         systemPrompt: "You are a senior backend engineer. Focus on API design, database optimization, and system reliability.",
         skills: JSON.stringify(["code-review", "api-design", "database"]),
         mcpServers: JSON.stringify(["github", "notion"]),
@@ -100,7 +107,7 @@ export async function POST() {
         name: "product-lead",
         color: "#F59E0B",
         repoUrl: "https://github.com/acme/product-specs",
-        harness: "codex",
+        harness: defaultHarness,
         systemPrompt: "You are a product manager agent. Analyze requirements, write specs, and coordinate with engineering.",
         skills: JSON.stringify(["spec-writing", "analysis"]),
         mcpServers: JSON.stringify(["notion", "jira"]),
@@ -115,12 +122,12 @@ export async function POST() {
         name: "design-lead",
         color: "#EC4899",
         repoUrl: "https://github.com/acme/design-system",
-        harness: "claude-code",
+        harness: defaultHarness,
         systemPrompt: "You are a design systems engineer. Focus on component architecture, accessibility, and visual consistency.",
         skills: JSON.stringify(["component-design", "a11y"]),
         mcpServers: JSON.stringify(["figma"]),
         scripts: JSON.stringify([]),
-        status: "running",
+        status: "idle",
         userId,
       },
     })
@@ -130,7 +137,7 @@ export async function POST() {
         name: "data-lead",
         color: "#8B5CF6",
         repoUrl: "https://github.com/acme/data-pipeline",
-        harness: "gemini-cli",
+        harness: defaultHarness,
         systemPrompt: "You are a data engineering agent. Focus on ETL pipelines, data quality, and analytics.",
         skills: JSON.stringify(["data-modeling", "sql", "pipeline-design"]),
         mcpServers: JSON.stringify(["bigquery"]),
