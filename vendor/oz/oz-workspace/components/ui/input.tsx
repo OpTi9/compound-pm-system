@@ -6,8 +6,8 @@ function Input({ className, type, ...props }: React.ComponentProps<"input">) {
   // Guard against `value={undefined}` which flips an input from uncontrolled -> controlled
   // once a value is later set (React warning).
   const safeProps =
-    Object.prototype.hasOwnProperty.call(props, "value") && (props as any).value === undefined
-      ? ({ ...(props as any), value: "" } as typeof props)
+    Object.prototype.hasOwnProperty.call(props, "value") && props.value === undefined
+      ? { ...props, value: "" }
       : props
 
   return (

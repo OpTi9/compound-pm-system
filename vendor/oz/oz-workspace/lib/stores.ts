@@ -8,6 +8,26 @@ import type {
   Notification,
 } from "@/lib/types"
 
+async function readJsonSafe(res: Response): Promise<unknown> {
+  const text = await res.text().catch(() => "")
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  try {
+    return JSON.parse(trimmed) as unknown
+  } catch {
+    return null
+  }
+}
+
+function ensureArray<T = unknown>(v: unknown): T[] {
+  return Array.isArray(v) ? (v as T[]) : []
+}
+
+function ensureObject<T extends Record<string, unknown> = Record<string, unknown>>(v: unknown): T {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {} as T
+  return v as T
+}
+
 // ─── Room Store ────────────────────────────────────────────
 
 interface RoomStore {
@@ -27,15 +47,25 @@ export const useRoomStore = create<RoomStore>((set) => ({
   activeRoomId: null,
   setActiveRoom: (id) => set({ activeRoomId: id }),
   fetchRooms: async () => {
-    const res = await fetch("/api/rooms")
-    const rooms = await res.json()
-    set({ rooms })
+    try {
+      const res = await fetch("/api/rooms")
+      const rooms = ensureArray<Room>(await readJsonSafe(res))
+      set({ rooms })
+    } catch (e) {
+      console.warn("fetchRooms failed:", e)
+      set({ rooms: [] })
+    }
   },
   refreshRoom: async (roomId) => {
-    const res = await fetch(`/api/rooms/${roomId}`)
-    if (!res.ok) return
-    const room = await res.json()
-    set((s) => ({ rooms: s.rooms.map((r) => (r.id === roomId ? room : r)) }))
+    try {
+      const res = await fetch(`/api/rooms/${roomId}`)
+      if (!res.ok) return
+      const room = ensureObject<Room>(await readJsonSafe(res))
+      if (!room?.id) return
+      set((s) => ({ rooms: s.rooms.map((r) => (r.id === roomId ? room : r)) }))
+    } catch (e) {
+      console.warn("refreshRoom failed:", e)
+    }
   },
   createRoom: async (name, description = "", agentIds = []) => {
     const res = await fetch("/api/rooms", {
@@ -43,7 +73,12 @@ export const useRoomStore = create<RoomStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name, description, agentIds }),
     })
-    const room = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to create room (${res.status})`)
+    }
+    const room = ensureObject<Room>(payload)
     set((s) => ({
       rooms: s.rooms.some((r) => r.id === room.id) ? s.rooms : [...s.rooms, room],
     }))
@@ -55,7 +90,12 @@ export const useRoomStore = create<RoomStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ agentIds }),
     })
-    const room = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to update room (${res.status})`)
+    }
+    const room = ensureObject<Room>(payload)
     set((s) => ({ rooms: s.rooms.map((r) => (r.id === roomId ? room : r)) }))
     return room
   },
@@ -65,7 +105,12 @@ export const useRoomStore = create<RoomStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ description }),
     })
-    const room = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to update room (${res.status})`)
+    }
+    const room = ensureObject<Room>(payload)
     set((s) => ({ rooms: s.rooms.map((r) => (r.id === roomId ? room : r)) }))
     return room
   },
@@ -91,9 +136,14 @@ interface AgentStore {
 export const useAgentStore = create<AgentStore>((set) => ({
   agents: [],
   fetchAgents: async () => {
-    const res = await fetch("/api/agents")
-    const agents = await res.json()
-    set({ agents })
+    try {
+      const res = await fetch("/api/agents")
+      const agents = ensureArray<Agent>(await readJsonSafe(res))
+      set({ agents })
+    } catch (e) {
+      console.warn("fetchAgents failed:", e)
+      set({ agents: [] })
+    }
   },
   createAgent: async (data) => {
     const res = await fetch("/api/agents", {
@@ -101,7 +151,12 @@ export const useAgentStore = create<AgentStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
-    const agent = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to create agent (${res.status})`)
+    }
+    const agent = ensureObject<Agent>(payload)
     set((s) => ({
       agents: s.agents.some((a) => a.id === agent.id) ? s.agents : [...s.agents, agent],
     }))
@@ -113,7 +168,12 @@ export const useAgentStore = create<AgentStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
-    const agent = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to update agent (${res.status})`)
+    }
+    const agent = ensureObject<Agent>(payload)
     set((s) => ({ agents: s.agents.map((a) => (a.id === id ? agent : a)) }))
     return agent
   },
@@ -135,9 +195,14 @@ interface MessageStore {
 export const useMessageStore = create<MessageStore>((set) => ({
   messagesByRoom: {},
   fetchMessages: async (roomId) => {
-    const res = await fetch(`/api/messages?roomId=${roomId}`)
-    const messages = await res.json()
-    set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: messages } }))
+    try {
+      const res = await fetch(`/api/messages?roomId=${roomId}`)
+      const messages = ensureArray<Message>(await readJsonSafe(res))
+      set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: messages } }))
+    } catch (e) {
+      console.warn("fetchMessages failed:", e)
+      set((s) => ({ messagesByRoom: { ...s.messagesByRoom, [roomId]: [] } }))
+    }
   },
   sendMessage: async (roomId, content) => {
     const res = await fetch("/api/messages", {
@@ -145,11 +210,12 @@ export const useMessageStore = create<MessageStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ roomId, content, authorType: "human" }),
     })
+    const payload = await readJsonSafe(res)
     if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: "Unknown error" }))
+      const err = ensureObject<{ error?: string }>(payload)
       throw new Error(err.error ?? `Failed to send message (${res.status})`)
     }
-    const message = await res.json()
+    const message = ensureObject<Message>(payload)
     set((s) => {
       const existing = s.messagesByRoom[roomId] || []
       if (existing.some((m) => m.id === message.id)) {
@@ -199,9 +265,14 @@ interface ArtifactStore {
 export const useArtifactStore = create<ArtifactStore>((set) => ({
   artifactsByRoom: {},
   fetchArtifacts: async (roomId) => {
-    const res = await fetch(`/api/artifacts?roomId=${roomId}`)
-    const artifacts = await res.json()
-    set((s) => ({ artifactsByRoom: { ...s.artifactsByRoom, [roomId]: artifacts } }))
+    try {
+      const res = await fetch(`/api/artifacts?roomId=${roomId}`)
+      const artifacts = ensureArray<Artifact>(await readJsonSafe(res))
+      set((s) => ({ artifactsByRoom: { ...s.artifactsByRoom, [roomId]: artifacts } }))
+    } catch (e) {
+      console.warn("fetchArtifacts failed:", e)
+      set((s) => ({ artifactsByRoom: { ...s.artifactsByRoom, [roomId]: [] } }))
+    }
   },
   createArtifact: async (data) => {
     const res = await fetch("/api/artifacts", {
@@ -209,7 +280,12 @@ export const useArtifactStore = create<ArtifactStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
-    const artifact = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to create artifact (${res.status})`)
+    }
+    const artifact = ensureObject<Artifact>(payload)
     set((s) => {
       const existing = s.artifactsByRoom[data.roomId] || []
       if (existing.some((a) => a.id === artifact.id)) return s
@@ -232,11 +308,15 @@ interface TaskStore {
 export const useTaskStore = create<TaskStore>((set) => ({
   tasksByRoom: {},
   fetchTasks: async (roomId) => {
-    const res = await fetch(`/api/tasks?roomId=${roomId}`)
-    if (!res.ok) return
-    const tasks = await res.json()
-    if (!Array.isArray(tasks)) return
-    set((s) => ({ tasksByRoom: { ...s.tasksByRoom, [roomId]: tasks } }))
+    try {
+      const res = await fetch(`/api/tasks?roomId=${roomId}`)
+      if (!res.ok) return
+      const tasks = ensureArray<Task>(await readJsonSafe(res))
+      set((s) => ({ tasksByRoom: { ...s.tasksByRoom, [roomId]: tasks } }))
+    } catch (e) {
+      console.warn("fetchTasks failed:", e)
+      set((s) => ({ tasksByRoom: { ...s.tasksByRoom, [roomId]: [] } }))
+    }
   },
   createTask: async (data) => {
     const res = await fetch("/api/tasks", {
@@ -244,7 +324,12 @@ export const useTaskStore = create<TaskStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
-    const task = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to create task (${res.status})`)
+    }
+    const task = ensureObject<Task>(payload)
     set((s) => {
       const existing = s.tasksByRoom[data.roomId] || []
       if (existing.some((t) => t.id === task.id)) return s
@@ -263,7 +348,12 @@ export const useTaskStore = create<TaskStore>((set) => ({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
     })
-    const task = await res.json()
+    const payload = await readJsonSafe(res)
+    if (!res.ok) {
+      const err = ensureObject<{ error?: string }>(payload)
+      throw new Error(err.error ?? `Failed to update task (${res.status})`)
+    }
+    const task = ensureObject<Task>(payload)
     set((s) => {
       const updated: Record<string, Task[]> = {}
       for (const [roomId, tasks] of Object.entries(s.tasksByRoom)) {
@@ -299,12 +389,17 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
   notifications: [],
   unreadCount: 0,
   fetchNotifications: async () => {
-    const res = await fetch("/api/notifications")
-    const notifications = await res.json()
-    set({
-      notifications,
-      unreadCount: notifications.filter((n: Notification) => !n.read).length,
-    })
+    try {
+      const res = await fetch("/api/notifications")
+      const notifications = ensureArray<Notification>(await readJsonSafe(res))
+      set({
+        notifications,
+        unreadCount: notifications.filter((n) => !n.read).length,
+      })
+    } catch (e) {
+      console.warn("fetchNotifications failed:", e)
+      set({ notifications: [], unreadCount: 0 })
+    }
   },
   markAsRead: async (id) => {
     await fetch(`/api/notifications/${id}`, { method: "PATCH" })
@@ -348,9 +443,14 @@ interface SettingsStore {
 export const useSettingsStore = create<SettingsStore>((set) => ({
   settings: {},
   fetchSettings: async () => {
-    const res = await fetch("/api/settings")
-    const settings = await res.json()
-    set({ settings })
+    try {
+      const res = await fetch("/api/settings")
+      const settings = ensureObject<Record<string, unknown>>(await readJsonSafe(res))
+      set({ settings })
+    } catch (e) {
+      console.warn("fetchSettings failed:", e)
+      set({ settings: {} })
+    }
   },
   updateSetting: async (key, value) => {
     await fetch("/api/settings", {

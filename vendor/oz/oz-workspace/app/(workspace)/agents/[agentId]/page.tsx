@@ -38,30 +38,38 @@ export default function AgentDetailPage({
     setLoadError(null)
     fetch(`/api/agents/${agentId}`)
       .then(async (r) => {
-        const body = await r.json().catch(() => null as any)
-        if (!r.ok) throw new Error(body?.error || `Failed (${r.status})`)
+        const body: unknown = await r.json().catch(() => null)
+        if (!r.ok) {
+          let msg: string | null = null
+          if (body && typeof body === "object" && "error" in body) {
+            const e = (body as Record<string, unknown>).error
+            if (typeof e === "string") msg = e
+          }
+          throw new Error(msg || `Failed (${r.status})`)
+        }
         return body
       })
       .then((data) => {
         if (cancelled) return
         // Defensive normalization to keep form inputs controlled.
         // (Prevents React uncontrolled<->controlled warnings when API returns partial/invalid shapes.)
-        const s = (v: any, fallback = ""): string => (typeof v === "string" ? v : fallback)
-        const arr = (v: any): string[] => (Array.isArray(v) ? v.map(String) : [])
+        const s = (v: unknown, fallback = ""): string => (typeof v === "string" ? v : fallback)
+        const arr = (v: unknown): string[] => (Array.isArray(v) ? v.map((x) => String(x)) : [])
+        const obj: Record<string, unknown> = data && typeof data === "object" ? (data as Record<string, unknown>) : {}
         const normalized: Agent = {
-          id: s(data?.id),
-          name: s(data?.name),
-          color: s(data?.color, "#3B82F6"),
-          icon: s(data?.icon, "robot"),
-          repoUrl: s(data?.repoUrl),
-          harness: s(data?.harness, "claude-code") as Agent["harness"],
-          environmentId: s(data?.environmentId),
-          systemPrompt: s(data?.systemPrompt),
-          skills: arr(data?.skills),
-          mcpServers: arr(data?.mcpServers),
-          scripts: arr(data?.scripts),
-          status: s(data?.status, "idle") as Agent["status"],
-          createdAt: s(data?.createdAt),
+          id: s(obj.id),
+          name: s(obj.name),
+          color: s(obj.color, "#3B82F6"),
+          icon: s(obj.icon, "robot"),
+          repoUrl: s(obj.repoUrl),
+          harness: s(obj.harness, "claude-code") as Agent["harness"],
+          environmentId: s(obj.environmentId),
+          systemPrompt: s(obj.systemPrompt),
+          skills: arr(obj.skills),
+          mcpServers: arr(obj.mcpServers),
+          scripts: arr(obj.scripts),
+          status: s(obj.status, "idle") as Agent["status"],
+          createdAt: s(obj.createdAt),
         }
         if (!normalized.id || !normalized.name) {
           throw new Error("Invalid agent payload")
