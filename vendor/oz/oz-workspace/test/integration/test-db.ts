@@ -35,6 +35,9 @@ export async function setupTestDb(): Promise<{ dbUrl: string; cleanup: () => voi
     TURSO_DATABASE_URL: dbUrl, // runtime adapter uses this
     TURSO_AUTH_TOKEN: "",
     NODE_ENV: "test",
+    // Prisma v7 blocks destructive CLI commands when invoked by AI agents.
+    // This is an ephemeral test DB in /tmp — safe to force-reset.
+    PRISMA_USER_CONSENT_FOR_DANGEROUS_AI_ACTION: "yes",
   }
 
   // Use `db push` for test DB setup, matching this repo's documented setup path and ensuring the
