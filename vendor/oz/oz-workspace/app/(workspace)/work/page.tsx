@@ -82,6 +82,38 @@ type OrchestratorHealth = {
   queue: { by_status: Record<string, number>; oldest_queued_age_ms: number | null; stuck_running_count: number }
 }
 
+type WorkItemDetail = {
+  id: string
+  type: string
+  status: string
+  payload: string
+  chainId: string | null
+  sourceItemId: string | null
+  iteration: number
+  maxIterations: number
+  roomId: string | null
+  agentId: string | null
+  epicId: string | null
+  sourceTaskId: string | null
+  claimedAt: string | null
+  leaseExpiresAt: string | null
+  runId: string | null
+  attempts: number
+  maxAttempts: number
+  lastError: string | null
+  createdAt: string
+  updatedAt: string
+  room?: { id: string; name: string } | null
+  agent?: { id: string; name: string; color: string; icon: string } | null
+  epic?: { id: string; title: string; order: number; status: string; prdId: string } | null
+}
+
+type WorkItemOutput = {
+  runId: string | null
+  message: { id: string; content: string; sessionUrl: string | null; timestamp: string; authorId: string | null; authorType: string } | null
+  run: { id: string; state: string; errorMessage: string | null; queuedAt: string; startedAt: string | null; completedAt: string | null; updatedAt: string } | null
+}
+
 async function fetchJson<T>(url: string): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
   const res = await fetch(url, { cache: "no-store" })
   if (!res.ok) {
@@ -115,6 +147,24 @@ function firstLine(text: string | null | undefined) {
   return t.split(/\r?\n/, 1)[0] || ""
 }
 
+function safeJsonParse<T>(text: string, fallback: T): T {
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return fallback
+  }
+}
+
+function fmtDurationMs(ms: number | null | undefined) {
+  if (!ms || ms <= 0) return ""
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  return `${h}h${m % 60 ? ` ${m % 60}m` : ""}`
+}
+
 export default function WorkPage() {
   const { rooms, fetchRooms } = useRoomStore()
   const [roomId, setRoomId] = React.useState<string>("")
@@ -125,6 +175,11 @@ export default function WorkPage() {
   const [workItems, setWorkItems] = React.useState<WorkItem[]>([])
   const [knowledge, setKnowledge] = React.useState<KnowledgeItem[]>([])
   const [orch, setOrch] = React.useState<OrchestratorHealth | null>(null)
+  const [roomRunning, setRoomRunning] = React.useState<WorkItem[]>([])
+
+  const [workItemOpen, setWorkItemOpen] = React.useState(false)
+  const [workItemDetail, setWorkItemDetail] = React.useState<WorkItemDetail | null>(null)
+  const [workItemOutput, setWorkItemOutput] = React.useState<WorkItemOutput | null>(null)
 
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -209,6 +264,9 @@ export default function WorkPage() {
     const res = await fetchJson<OrchestratorHealth>(`/api/orchestrator/health?roomId=${encodeURIComponent(roomId)}`)
     if (!res.ok) return
     setOrch(res.data)
+
+    const running = await fetchJson<{ items: WorkItem[] }>(`/api/work-items?roomId=${encodeURIComponent(roomId)}&status=RUNNING&limit=200`)
+    if (running.ok) setRoomRunning(running.data.items)
   }, [roomId])
 
   React.useEffect(() => {
@@ -218,6 +276,7 @@ export default function WorkPage() {
     setWorkItems([])
     setKnowledge([])
     setOrch(null)
+    setRoomRunning([])
     setError(null)
     if (!roomId) return
     refreshPrds().catch(() => {})
@@ -234,6 +293,14 @@ export default function WorkPage() {
     refreshWorkItems(selectedPrdId).catch(() => {})
     refreshKnowledge({ roomId, prdId: selectedPrdId }).catch(() => {})
   }, [selectedPrdId, refreshPrdDetail, refreshWorkItems, refreshKnowledge, roomId])
+
+  React.useEffect(() => {
+    if (!roomId) return
+    const id = window.setInterval(() => {
+      refreshOrchestrator().catch(() => {})
+    }, 10_000)
+    return () => window.clearInterval(id)
+  }, [roomId, refreshOrchestrator])
 
   const handleCreatePrd = async () => {
     if (!roomId || !newPrdTitle.trim()) return
@@ -412,6 +479,59 @@ export default function WorkPage() {
     }
   }
 
+  const cancelItemNoChain = async (id: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/work-items/${encodeURIComponent(id)}/cancel`, { method: "POST" })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed" }))
+        throw new Error(body.error || `Failed (${res.status})`)
+      }
+      refreshOrchestrator().catch(() => {})
+      if (selectedPrdId) refreshWorkItems(selectedPrdId).catch(() => {})
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to cancel")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const requeueItemNoChain = async (id: string) => {
+    setBusy(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/work-items/${encodeURIComponent(id)}/requeue`, { method: "POST" })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: "Failed" }))
+        throw new Error(body.error || `Failed (${res.status})`)
+      }
+      refreshOrchestrator().catch(() => {})
+      if (selectedPrdId) refreshWorkItems(selectedPrdId).catch(() => {})
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to requeue")
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openWorkItem = async (id: string) => {
+    setWorkItemOpen(true)
+    setWorkItemDetail(null)
+    setWorkItemOutput(null)
+    setError(null)
+    try {
+      const detail = await fetchJson<WorkItemDetail>(`/api/work-items/${encodeURIComponent(id)}`)
+      if (!detail.ok) throw new Error(detail.error)
+      setWorkItemDetail(detail.data)
+
+      const out = await fetchJson<WorkItemOutput>(`/api/work-items/${encodeURIComponent(id)}/output`)
+      if (out.ok) setWorkItemOutput(out.data)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load work item")
+    }
+  }
+
   const groupedWork = React.useMemo(() => {
     const groups = new Map<string, { key: string; title: string; order: number; items: WorkItem[] }>()
     for (const w of workItems) {
@@ -432,6 +552,20 @@ export default function WorkPage() {
     out.sort((a, b) => a.order - b.order || a.title.localeCompare(b.title) || a.key.localeCompare(b.key))
     return out
   }, [workItems])
+
+  const stuckItems = React.useMemo(() => {
+    const nowMs = Date.now()
+    const thresholdMs = 30 * 60_000
+    const stuck = roomRunning
+      .map((w) => {
+        const claimedAtMs = w.claimedAt ? new Date(w.claimedAt).getTime() : 0
+        const ageMs = claimedAtMs ? Math.max(0, nowMs - claimedAtMs) : 0
+        return { w, ageMs }
+      })
+      .filter((x) => x.ageMs > thresholdMs)
+    stuck.sort((a, b) => b.ageMs - a.ageMs)
+    return stuck.slice(0, 12)
+  }, [roomRunning])
 
   return (
     <div className="flex h-full flex-col">
@@ -496,6 +630,78 @@ export default function WorkPage() {
         <div className="overflow-hidden">
           <ScrollArea className="h-full">
             <div className="p-4 space-y-4">
+              {orch && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Orchestrator</CardTitle>
+                    <CardDescription className="text-xs">
+                      {orch.heartbeat.last_tick_at
+                        ? `Last tick ${Math.round((orch.heartbeat.age_ms || 0) / 1000)}s ago`
+                        : "No heartbeat yet"}
+                      {orch.queue.oldest_queued_age_ms != null ? ` · Oldest queued ${fmtDurationMs(orch.queue.oldest_queued_age_ms)}` : ""}
+                      {orch.queue.stuck_running_count ? ` · Stuck running ${orch.queue.stuck_running_count}` : ""}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(orch.queue.by_status || {}).map(([k, v]) => (
+                        <Badge key={k} variant="outline">{k}:{v}</Badge>
+                      ))}
+                    </div>
+
+                    {stuckItems.length > 0 && (
+                      <div className="space-y-2">
+                        <div className="text-xs font-medium">Stuck Items (RUNNING &gt; 30m)</div>
+                        <div className="space-y-2">
+                          {stuckItems.map(({ w, ageMs }) => (
+                            <div
+                              key={w.id}
+                              className="rounded-md border p-3 cursor-pointer hover:bg-muted/30"
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => openWorkItem(w.id)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") openWorkItem(w.id)
+                              }}
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs font-medium">{w.type}</span>
+                                    <Badge variant={badgeVariantForStatus(w.status)}>{w.status}</Badge>
+                                    <span className="text-[0.625rem] text-muted-foreground">{fmtDurationMs(ageMs)}</span>
+                                  </div>
+                                  <div className="mt-1 text-[0.625rem] text-muted-foreground">
+                                    {w.agent?.name ? `Agent: ${w.agent.name}` : (w.agentId ? `Agent: ${w.agentId}` : "Agent: -")}
+                                    {" · "}
+                                    Claimed {fmtShort(w.claimedAt)}
+                                    {w.runId ? ` · run ${w.runId}` : ""}
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="destructive"
+                                    className="h-7 text-xs"
+                                    disabled={busy}
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      cancelItemNoChain(w.id)
+                                    }}
+                                  >
+                                    Cancel
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+
               {error && (
                 <Card size="sm" className="border-destructive/30">
                   <CardHeader>
@@ -618,7 +824,16 @@ export default function WorkPage() {
                               </div>
                               <div className="space-y-2">
                                 {g.items.map((w) => (
-                                  <div key={w.id} className="rounded-md border p-3">
+                                  <div
+                                    key={w.id}
+                                    className="rounded-md border p-3 cursor-pointer hover:bg-muted/30"
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => openWorkItem(w.id)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter" || e.key === " ") openWorkItem(w.id)
+                                    }}
+                                  >
                                     <div className="flex items-center justify-between gap-2">
                                       <div className="min-w-0">
                                         <div className="flex items-center gap-2">
@@ -639,18 +854,18 @@ export default function WorkPage() {
                                       </div>
                                       <div className="flex items-center gap-2">
                                         {["FAILED", "CANCELLED"].includes(w.status) && (
-                                          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={() => requeueItem(w.id)}>
+                                          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={busy} onClick={(e) => { e.stopPropagation(); requeueItem(w.id) }}>
                                             Requeue
                                           </Button>
                                         )}
                                         {["QUEUED", "CLAIMED", "RUNNING"].includes(w.status) && (
-                                          <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={busy} onClick={() => cancelItem(w.id)}>
+                                          <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={busy} onClick={(e) => { e.stopPropagation(); cancelItem(w.id) }}>
                                             Cancel
                                           </Button>
                                         )}
                                       </div>
                                     </div>
-                                    {w.lastError && (
+                              {w.lastError && (
                                       <div className="mt-2 rounded-md bg-destructive/5 p-2 text-[0.6875rem] text-destructive">
                                         {firstLine(w.lastError)}
                                       </div>
@@ -818,6 +1033,103 @@ export default function WorkPage() {
           <DialogFooter>
             <Button variant="outline" onClick={() => setAddKnowledgeOpen(false)} disabled={busy}>Cancel</Button>
             <Button onClick={handleAddKnowledge} disabled={busy || !knowledgeTitle.trim() || !knowledgeContent.trim()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={workItemOpen} onOpenChange={setWorkItemOpen}>
+        <DialogContent className="sm:max-w-[900px]">
+          <DialogHeader>
+            <DialogTitle>Work Item</DialogTitle>
+            <DialogDescription className="text-xs">
+              {workItemDetail ? `${workItemDetail.type} · ${workItemDetail.status} · ${workItemDetail.id}` : "Loading..."}
+            </DialogDescription>
+          </DialogHeader>
+          {!workItemDetail ? (
+            <div className="text-xs text-muted-foreground">Loading details...</div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant={badgeVariantForStatus(workItemDetail.status)}>{workItemDetail.status}</Badge>
+                <Badge variant="outline">{workItemDetail.type}</Badge>
+                {workItemDetail.epic?.title && <Badge variant="outline">Epic: {workItemDetail.epic.title}</Badge>}
+                {workItemDetail.runId && <Badge variant="outline">run {workItemDetail.runId}</Badge>}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-[0.6875rem] text-muted-foreground">
+                <div>Agent: {workItemDetail.agent?.name || workItemDetail.agentId || "-"}</div>
+                <div>Room: {workItemDetail.room?.name || workItemDetail.roomId || "-"}</div>
+                <div>Created: {fmtShort(workItemDetail.createdAt)}</div>
+                <div>Claimed: {fmtShort(workItemDetail.claimedAt)}</div>
+                <div>Lease: {fmtShort(workItemDetail.leaseExpiresAt)}</div>
+                <div>Attempts: {workItemDetail.attempts}/{workItemDetail.maxAttempts}</div>
+              </div>
+
+              {workItemDetail.lastError && (
+                <pre className="max-h-[140px] overflow-auto rounded-md border bg-destructive/5 p-3 text-[0.6875rem] leading-relaxed whitespace-pre-wrap text-destructive">
+                  {workItemDetail.lastError}
+                </pre>
+              )}
+
+              {(() => {
+                const payload = safeJsonParse<any>(workItemDetail.payload, {})
+                const prompt = typeof payload?.prompt === "string" ? payload.prompt : ""
+                const title = typeof payload?.title === "string" ? payload.title : ""
+                return (
+                  <div className="space-y-2">
+                    <div className="text-xs font-medium">Payload</div>
+                    {title ? (
+                      <div className="text-[0.6875rem] text-muted-foreground">Title: {title}</div>
+                    ) : null}
+                    <pre className="max-h-[220px] overflow-auto rounded-md border bg-muted/30 p-3 text-[0.6875rem] leading-relaxed whitespace-pre-wrap">
+                      {prompt || "(no prompt)"}
+                    </pre>
+                  </div>
+                )
+              })()}
+
+              <div className="space-y-2">
+                <div className="text-xs font-medium">Last Output</div>
+                <pre className="max-h-[260px] overflow-auto rounded-md border bg-muted/30 p-3 text-[0.6875rem] leading-relaxed whitespace-pre-wrap">
+                  {workItemOutput?.message?.content || "(no output persisted yet)"}
+                </pre>
+                {workItemOutput?.message?.sessionUrl && (
+                  <div className="text-[0.6875rem]">
+                    Session:{" "}
+                    <Link className="underline" href={workItemOutput.message.sessionUrl} target="_blank" rel="noreferrer">
+                      {workItemOutput.message.sessionUrl}
+                    </Link>
+                  </div>
+                )}
+                {workItemOutput?.run?.state && (
+                  <div className="text-[0.6875rem] text-muted-foreground">
+                    Run state: {workItemOutput.run.state}
+                    {workItemOutput.run.errorMessage ? ` · ${firstLine(workItemOutput.run.errorMessage)}` : ""}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            {workItemDetail && ["FAILED", "CANCELLED"].includes(workItemDetail.status) && (
+              <Button
+                variant="outline"
+                disabled={busy}
+                onClick={() => requeueItemNoChain(workItemDetail.id)}
+              >
+                Requeue
+              </Button>
+            )}
+            {workItemDetail && ["QUEUED", "CLAIMED", "RUNNING"].includes(workItemDetail.status) && (
+              <Button
+                variant="destructive"
+                disabled={busy}
+                onClick={() => cancelItemNoChain(workItemDetail.id)}
+              >
+                Cancel
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => setWorkItemOpen(false)} disabled={busy}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
