@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 import { prisma } from "@/lib/prisma"
 import { getSharedRoomByPublicShareId } from "@/lib/public-share"
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit"
 
 const AGENT_PUBLIC_SELECT = {
   id: true,
@@ -16,6 +17,14 @@ export async function GET(request: Request) {
   const before = (searchParams.get("before") || "").trim()
   const limit = Math.min(Math.max(Number(searchParams.get("limit") || "2000"), 1), 2000)
   if (!shareId) return NextResponse.json({ error: "shareId required" }, { status: 400 })
+
+  const ip = getClientIp(request)
+  const rl = checkRateLimit(`public:messages:${shareId}:ip:${ip}`, { limit: 120, windowMs: 60_000 })
+  if (!rl.ok) {
+    const res = NextResponse.json({ error: "Too many requests" }, { status: 429 })
+    res.headers.set("Retry-After", String(rl.retryAfterSeconds))
+    return res
+  }
 
   const room = await getSharedRoomByPublicShareId(shareId)
   if (!room) return NextResponse.json({ error: "Not found" }, { status: 404 })

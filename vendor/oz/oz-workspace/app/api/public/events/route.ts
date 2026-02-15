@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server"
 import { getSharedRoomByPublicShareId } from "@/lib/public-share"
 import { eventBroadcaster, type BroadcastEvent } from "@/lib/event-broadcaster"
+import { checkRateLimit, getClientIp } from "@/lib/rate-limit"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -29,6 +30,12 @@ export async function GET(request: NextRequest) {
 
   if (!shareId) {
     return new Response("shareId required", { status: 400 })
+  }
+
+  const ip = getClientIp(request)
+  const rl = checkRateLimit(`public:events:${shareId}:ip:${ip}`, { limit: 10, windowMs: 60_000 })
+  if (!rl.ok) {
+    return new Response("Too many requests", { status: 429, headers: { "Retry-After": String(rl.retryAfterSeconds) } })
   }
 
   const room = await getSharedRoomByPublicShareId(shareId)
@@ -144,4 +151,3 @@ export async function GET(request: NextRequest) {
     },
   })
 }
-

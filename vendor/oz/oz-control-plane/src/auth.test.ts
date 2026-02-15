@@ -22,6 +22,11 @@ test("requireAuth: admin key match -> isAdmin", () => {
     if (!r.ok) throw new Error("unexpected")
     assert.equal(r.isAdmin, true)
     assert.equal(r.ownerKeyHash, null)
+
+    const r2 = requireAuth({ headers: { authorization: "Bearer sekret!" } })
+    assert.equal(r2.ok, true)
+    if (!r2.ok) throw new Error("unexpected")
+    assert.equal(r2.isAdmin, false)
   } finally {
     process.env.OZ_ADMIN_API_KEY = prev
   }
