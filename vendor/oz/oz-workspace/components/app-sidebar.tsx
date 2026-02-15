@@ -10,6 +10,7 @@ import {
   PlusIcon,
   GearIcon,
   HouseIcon,
+  NotepadIcon,
   SignOutIcon,
 } from "@phosphor-icons/react"
 import { AgentIcon } from "@/components/agent-icon"
@@ -90,6 +91,14 @@ export function AppSidebar() {
                   {unreadCount > 0 && (
                     <SidebarMenuBadge>{unreadCount}</SidebarMenuBadge>
                   )}
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={pathname === "/work"}>
+                    <Link href="/work">
+                      <NotepadIcon />
+                      <span>Work</span>
+                    </Link>
+                  </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>

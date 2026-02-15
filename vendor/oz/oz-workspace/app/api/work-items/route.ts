@@ -9,6 +9,73 @@ function badRequest(message: string) {
   return NextResponse.json({ error: message }, { status: 400 })
 }
 
+export async function GET(request: Request) {
+  try {
+    const userId = await getAuthenticatedUserId()
+    const { searchParams } = new URL(request.url)
+    const roomId = (searchParams.get("roomId") || "").trim()
+    const chainId = (searchParams.get("chainId") || "").trim()
+    const status = (searchParams.get("status") || "").trim().toUpperCase()
+    const type = (searchParams.get("type") || "").trim()
+    const limit = Math.min(Math.max(Number(searchParams.get("limit") || "200"), 1), 500)
+
+    if (roomId) {
+      const room = await prisma.room.findUnique({ where: { id: roomId, userId }, select: { id: true } })
+      if (!room) return NextResponse.json({ error: "Not found" }, { status: 404 })
+    }
+
+    const where: any = roomId
+      ? { roomId }
+      : { room: { userId } }
+    if (chainId) where.chainId = chainId
+    if (status) where.status = status
+    if (type) where.type = type
+
+    const orderBy = chainId ? { createdAt: "asc" as const } : { createdAt: "desc" as const }
+
+    const items = await prisma.workItem.findMany({
+      where,
+      orderBy,
+      take: limit,
+      include: {
+        agent: { select: { id: true, name: true, color: true, icon: true, status: true, activeRoomId: true } },
+        room: { select: { id: true, name: true } },
+      },
+    })
+
+    return NextResponse.json({
+      items: items.map((w) => ({
+        id: w.id,
+        type: w.type,
+        status: w.status,
+        chainId: w.chainId,
+        sourceItemId: w.sourceItemId,
+        iteration: w.iteration,
+        maxIterations: w.maxIterations,
+        roomId: w.roomId,
+        agentId: w.agentId,
+        runId: w.runId,
+        attempts: w.attempts,
+        maxAttempts: w.maxAttempts,
+        lastError: w.lastError,
+        claimedAt: w.claimedAt,
+        leaseExpiresAt: w.leaseExpiresAt,
+        createdAt: w.createdAt,
+        updatedAt: w.updatedAt,
+        room: w.room,
+        agent: w.agent,
+      })),
+    })
+  } catch (error) {
+    if (error instanceof AuthError) return unauthorizedResponse()
+    console.error("GET /api/work-items error:", error)
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unknown error" },
+      { status: 500 }
+    )
+  }
+}
+
 function isValidType(t: unknown): t is string {
   if (typeof t !== "string") return false
   const s = t.trim()
@@ -82,4 +149,3 @@ export async function POST(request: Request) {
     )
   }
 }
-
