@@ -11,6 +11,7 @@ import {
 } from "./router.js"
 import { runOpenAICompatibleChat, runOpenAICompatibleChatStream } from "./openai_compatible.js"
 import { runAnthropicMessages, runAnthropicMessagesStream } from "./providers/anthropic.js"
+import { runCliProvider } from "./providers/cli.js"
 
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
@@ -106,7 +107,11 @@ export async function runLocalAgent(opts: {
             })
           }
         } else if (candidate.type === "cli") {
-          throw new Error("CLI providers are not supported in oz-control-plane yet.")
+          response = await runCliProvider({
+            providerKey: candidate.providerKey,
+            prompt: `${system}\n\n${opts.prompt}`,
+            model: candidate.model,
+          })
         } else {
           if (!candidate.baseUrl) throw new Error(`Missing provider base URL for ${candidate.providerKey}`)
           if (streamingEnabled()) {
@@ -182,4 +187,3 @@ export async function runLocalAgent(opts: {
     data: { state: "SUCCEEDED", completedAt: new Date(), errorMessage: null, output },
   })
 }
-
