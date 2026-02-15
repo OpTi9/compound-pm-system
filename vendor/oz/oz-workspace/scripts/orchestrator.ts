@@ -42,6 +42,14 @@ function newRunId(workItemId: string): string {
   return `inv_work_${h}`
 }
 
+async function writeHeartbeat() {
+  await prisma.agentCallback.upsert({
+    where: { id: "orch:last_tick" },
+    update: { response: now().toISOString() },
+    create: { id: "orch:last_tick", response: now().toISOString() },
+  }).catch(() => {})
+}
+
 async function ensureChainId(item: { id: string; chainId: string | null }): Promise<string> {
   if (item.chainId) return item.chainId
   // First item in a chain: use its own id.
@@ -687,6 +695,72 @@ async function requeueExpired(opts: { leaseMs: number }) {
   }
 }
 
+async function reconcileFinalizedRuns(opts: { excludeIds: string[] }) {
+  const exclude = (opts.excludeIds || []).filter(Boolean)
+  const running = await prisma.workItem.findMany({
+    where: {
+      status: "RUNNING",
+      runId: { not: null },
+      ...(exclude.length ? { id: { notIn: exclude } } : {}),
+    },
+    select: { id: true, runId: true, status: true },
+    take: 50,
+  })
+  if (running.length === 0) return
+
+  const runIds = Array.from(new Set(running.map((w) => w.runId).filter(Boolean) as string[]))
+  if (runIds.length === 0) return
+
+  const [runs, messages] = await Promise.all([
+    prisma.agentRun.findMany({
+      where: { id: { in: runIds } },
+      select: { id: true, state: true, errorMessage: true },
+    }).catch(() => [] as Array<{ id: string; state: string; errorMessage: string | null }>),
+    prisma.message.findMany({
+      where: { id: { in: runIds } },
+      select: { id: true, content: true },
+    }).catch(() => [] as Array<{ id: string; content: string }>),
+  ])
+
+  const runById = new Map(runs.map((r) => [r.id, r]))
+  const msgById = new Map(messages.map((m) => [m.id, m]))
+
+  for (const w of running) {
+    const runId = w.runId || ""
+    if (!runId) continue
+
+    const run = runById.get(runId)
+    if (run?.state === "SUCCEEDED" || run?.state === "FAILED" || run?.state === "CANCELLED") {
+      await prisma.workItem.updateMany({
+        where: { id: w.id, status: "RUNNING" },
+        data: {
+          status: run.state as WorkStatus,
+          leaseExpiresAt: null,
+          lastError: run.state === "FAILED" ? (run.errorMessage || "Run failed") : null,
+        },
+      }).catch(() => {})
+      continue
+    }
+
+    const msg = msgById.get(runId)
+    if (msg?.content && msg.content.trim()) {
+      await prisma.workItem.updateMany({
+        where: { id: w.id, status: "RUNNING" },
+        data: { status: "SUCCEEDED", leaseExpiresAt: null, lastError: null },
+      }).catch(() => {})
+    }
+  }
+}
+
+async function bumpLeases(ids: string[], leaseMs: number) {
+  const uniq = Array.from(new Set((ids || []).filter(Boolean)))
+  if (uniq.length === 0) return
+  await prisma.workItem.updateMany({
+    where: { id: { in: uniq }, status: "RUNNING" },
+    data: { leaseExpiresAt: new Date(Date.now() + leaseMs) },
+  }).catch(() => {})
+}
+
 async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
   const item = await prisma.workItem.findUnique({ where: { id: workItemId } })
   if (!item) return
@@ -868,35 +942,54 @@ async function handleWorkItem(workItemId: string, opts: { leaseMs: number }) {
 async function tick(opts: { pollMs: number; leaseMs: number }) {
   await requeueExpired({ leaseMs: opts.leaseMs })
 
-  // One-at-a-time for now (single instance). Increase concurrency later if needed.
+  // Back-compat: kept for older call sites. The main loop below now handles concurrency/in-flight.
   const claimed = await claimNext({ leaseMs: opts.leaseMs })
   if (!claimed) return
-
   if (claimed.attempts > claimed.maxAttempts) {
-    await prisma.workItem.update({
-      where: { id: claimed.id },
-      data: { status: "FAILED", leaseExpiresAt: null, lastError: "Max attempts exceeded" },
-    })
+    await prisma.workItem.update({ where: { id: claimed.id }, data: { status: "FAILED", leaseExpiresAt: null, lastError: "Max attempts exceeded" } })
     return
   }
-
   await handleWorkItem(claimed.id, { leaseMs: opts.leaseMs })
 }
 
 async function main() {
   const pollMs = Math.max(250, envInt("OZ_ORCH_POLL_MS", 2000))
   const leaseMs = Math.max(10_000, envInt("OZ_ORCH_LEASE_MS", 10 * 60_000))
+  const concurrency = Math.max(1, Math.min(16, envInt("OZ_ORCH_CONCURRENCY", 1)))
 
   // eslint-disable-next-line no-console
-  console.log("[orchestrator] starting", { pollMs, leaseMs })
+  console.log("[orchestrator] starting", { pollMs, leaseMs, concurrency })
+
+  const inFlight = new Map<string, Promise<void>>()
 
   // Simple polling loop.
   // Note: Next.js request handlers are not a safe place for this; run this script separately.
   for (;;) {
-    await tick({ pollMs, leaseMs }).catch((e) => {
-      // eslint-disable-next-line no-console
-      console.error("[orchestrator] tick failed", e)
-    })
+    await writeHeartbeat()
+    await reconcileFinalizedRuns({ excludeIds: Array.from(inFlight.keys()) }).catch(() => {})
+    await requeueExpired({ leaseMs }).catch(() => {})
+    await bumpLeases(Array.from(inFlight.keys()), leaseMs).catch(() => {})
+
+    while (inFlight.size < concurrency) {
+      const claimed = await claimNext({ leaseMs }).catch(() => null)
+      if (!claimed) break
+
+      if (claimed.attempts > claimed.maxAttempts) {
+        await prisma.workItem.update({ where: { id: claimed.id }, data: { status: "FAILED", leaseExpiresAt: null, lastError: "Max attempts exceeded" } }).catch(() => {})
+        continue
+      }
+
+      const p = handleWorkItem(claimed.id, { leaseMs })
+        .catch((e) => {
+          // eslint-disable-next-line no-console
+          console.error("[orchestrator] handleWorkItem failed", { id: claimed.id, err: e })
+        })
+        .finally(() => {
+          inFlight.delete(claimed.id)
+        })
+      inFlight.set(claimed.id, p)
+    }
+
     await new Promise((r) => setTimeout(r, pollMs))
   }
 }

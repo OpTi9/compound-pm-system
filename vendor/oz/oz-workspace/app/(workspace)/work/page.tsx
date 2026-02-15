@@ -76,6 +76,12 @@ type KnowledgeItem = {
   createdByAgent?: { id: string; name: string; color: string; icon: string } | null
 }
 
+type OrchestratorHealth = {
+  now: string
+  heartbeat: { last_tick_at: string | null; age_ms: number | null }
+  queue: { by_status: Record<string, number>; oldest_queued_age_ms: number | null; stuck_running_count: number }
+}
+
 async function fetchJson<T>(url: string): Promise<{ ok: true; data: T } | { ok: false; status: number; error: string }> {
   const res = await fetch(url, { cache: "no-store" })
   if (!res.ok) {
@@ -118,6 +124,7 @@ export default function WorkPage() {
   const [prdDetail, setPrdDetail] = React.useState<PrdDetail | null>(null)
   const [workItems, setWorkItems] = React.useState<WorkItem[]>([])
   const [knowledge, setKnowledge] = React.useState<KnowledgeItem[]>([])
+  const [orch, setOrch] = React.useState<OrchestratorHealth | null>(null)
 
   const [busy, setBusy] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
@@ -197,16 +204,25 @@ export default function WorkPage() {
     setKnowledge(res.data.items)
   }, [])
 
+  const refreshOrchestrator = React.useCallback(async () => {
+    if (!roomId) return
+    const res = await fetchJson<OrchestratorHealth>(`/api/orchestrator/health?roomId=${encodeURIComponent(roomId)}`)
+    if (!res.ok) return
+    setOrch(res.data)
+  }, [roomId])
+
   React.useEffect(() => {
     setPrds([])
     setSelectedPrdId("")
     setPrdDetail(null)
     setWorkItems([])
     setKnowledge([])
+    setOrch(null)
     setError(null)
     if (!roomId) return
     refreshPrds().catch(() => {})
-  }, [roomId, refreshPrds])
+    refreshOrchestrator().catch(() => {})
+  }, [roomId, refreshPrds, refreshOrchestrator])
 
   React.useEffect(() => {
     setPrdDetail(null)
@@ -538,10 +554,16 @@ export default function WorkPage() {
                             refreshPrdDetail(prdDetail.id)
                             refreshWorkItems(prdDetail.id)
                             refreshKnowledge({ roomId, prdId: prdDetail.id })
+                            refreshOrchestrator()
                           }}
                         >
                           Refresh Chain
                         </Button>
+                        {orch?.heartbeat?.last_tick_at && (
+                          <Badge variant="outline" className="h-7 text-[0.625rem] leading-6">
+                            Orch tick {Math.round((orch.heartbeat.age_ms || 0) / 1000)}s ago
+                          </Badge>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"
