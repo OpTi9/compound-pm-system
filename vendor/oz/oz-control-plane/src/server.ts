@@ -210,7 +210,7 @@ async function main() {
     } catch {
       url = null
     }
-    const pathname = url?.pathname || "/"
+    const pathname = url?.pathname || "<invalid>"
 
     res.on("finish", () => {
       const durMs = Number(process.hrtime.bigint() - startNs) / 1e6
