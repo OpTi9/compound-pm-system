@@ -490,21 +490,49 @@ async function handleDecomposeSucceeded(item: WorkItemRow, payload: any, decompo
 async function claimNext(opts: {
   leaseMs: number
 }): Promise<null | { id: string; attempts: number; maxAttempts: number }> {
+  const leaseExpiresAt = new Date(Date.now() + opts.leaseMs)
+  const claimedAt = now()
+
+  // Try an atomic claim to reduce thundering herd and close the "select-then-update" race window.
+  // Falls back to the previous 2-step approach if the DB doesn't support RETURNING.
+  try {
+    const rows = await prisma.$queryRaw<Array<{ id: string; attempts: number; maxAttempts: number }>>`
+      UPDATE "WorkItem"
+      SET
+        "status" = 'CLAIMED',
+        "claimedAt" = ${claimedAt},
+        "leaseExpiresAt" = ${leaseExpiresAt},
+        "leaseOwner" = ${ORCH_INSTANCE_ID},
+        "attempts" = "attempts" + 1,
+        "lastError" = NULL
+      WHERE "id" = (
+        SELECT "id"
+        FROM "WorkItem"
+        WHERE "status" = 'QUEUED'
+        ORDER BY "createdAt" ASC, "id" ASC
+        LIMIT 1
+      )
+      AND "status" = 'QUEUED'
+      RETURNING "id" as id, "attempts" as attempts, "maxAttempts" as maxAttempts;
+    `
+    if (rows.length > 0) return rows[0]
+    return null
+  } catch {
+    // ignore and fall back
+  }
+
   const next = await prisma.workItem.findFirst({
-    where: {
-      status: "QUEUED",
-    },
-    orderBy: [{ createdAt: "asc" }],
-    select: { id: true, attempts: true, maxAttempts: true },
+    where: { status: "QUEUED" },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    select: { id: true },
   })
   if (!next) return null
 
-  const leaseExpiresAt = new Date(Date.now() + opts.leaseMs)
   const updated = await prisma.workItem.updateMany({
     where: { id: next.id, status: "QUEUED" },
     data: {
       status: "CLAIMED",
-      claimedAt: now(),
+      claimedAt,
       leaseExpiresAt,
       leaseOwner: ORCH_INSTANCE_ID,
       attempts: { increment: 1 },
@@ -513,13 +541,10 @@ async function claimNext(opts: {
   })
   if (updated.count !== 1) return null
 
-  const claimed = await prisma.workItem.findUnique({
+  return prisma.workItem.findUnique({
     where: { id: next.id },
     select: { id: true, attempts: true, maxAttempts: true },
   })
-  if (!claimed) return null
-
-  return claimed
 }
 
 async function requeueExpired(opts: { leaseMs: number }) {
